@@ -8,3 +8,7 @@ __pycache__/
 # NiriMod Temporary Files
 *.kdl.bak
 *.kdl.tmp
+
+
+# Nix
+result
