@@ -17,13 +17,16 @@ dependencies = [
 ]
 
 [project.scripts]
-nirimod = "nirimod.main:main"
+nirimod = "nirimod.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nirimod"]
 
 [tool.ruff]
 ignore = ["E402"]
+
+[tool.uv]
+python-preference = "system"
 
 [dependency-groups]
 dev = [
