@@ -34,7 +34,9 @@ class KdlNode:
     trailing_trivia: str = ""
     children_trailing_trivia: str = ""
     source_file: Path | None = field(default=None, compare=False, repr=False)
-    _removed_children: dict[str, tuple[int, "KdlNode"]] = field(default_factory=dict, compare=False, repr=False)
+    _removed_children: dict[str, tuple[int, "KdlNode"]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     def get_child(self, name: str) -> "KdlNode | None":
         for c in reversed(self.children):
@@ -205,6 +207,16 @@ def _lex(text: str) -> list[tuple[str, str]]:
         # plain token (identifier, number, keyword)
         j = i
         while j < n and text[j] not in ' \t\r\n;{}"\\':
+            # Property values can be written as raw strings, e.g.
+            # title=r#"^notificationtoasts_\d+_desktop$"#. Stop after the
+            # '=' so the raw-string lexer below can preserve backslashes.
+            if text[j] == "=" and j + 1 < n and text[j + 1] == "r":
+                k = j + 2
+                while k < n and text[k] == "#":
+                    k += 1
+                if k < n and text[k] == '"':
+                    j += 1
+                    break
             if text[j] == "/" and j + 1 < n and text[j + 1] in "-/*":
                 break
             j += 1
@@ -439,6 +451,7 @@ def _resolve_includes(
         if not target.exists():
             if not optional:
                 import warnings
+
                 warnings.warn(f"nirimod: included file not found: {target}")
             continue
 
@@ -511,7 +524,7 @@ def save_niri_config_multi(
 
     # Rebuild config.kdl in the original node order (include lines stay where
     # the user put them rather than getting hoisted to the top).
-    _LARGE = 10 ** 9
+    _LARGE = 10**9
     primary_items: list[tuple[int, KdlNode]] = []
     for inc_node, _ in include_slots:
         primary_items.append((getattr(inc_node, "_primary_order", _LARGE), inc_node))
@@ -632,7 +645,12 @@ def _write_node(node: KdlNode, indent: int = 0) -> str:
 
             for child in node.children:
                 child_str = _write_node(child, indent + 1)
-                if res and not res.endswith("\n") and child_str and not child_str.startswith("\n"):
+                if (
+                    res
+                    and not res.endswith("\n")
+                    and child_str
+                    and not child_str.startswith("\n")
+                ):
                     res += "\n"
                 res += child_str
 
@@ -658,7 +676,9 @@ def _write_node(node: KdlNode, indent: int = 0) -> str:
         return res
 
     elif node.trailing_trivia:
-        if not node.trailing_trivia[0].isspace() and not node.trailing_trivia.startswith("\n"):
+        if not node.trailing_trivia[
+            0
+        ].isspace() and not node.trailing_trivia.startswith("\n"):
             res += " "
         res += node.trailing_trivia
 
@@ -677,8 +697,13 @@ def write_kdl(nodes: list[KdlNode]) -> str:
         node_str = _write_node(n)
         if getattr(n, "eof_trivia", None):
             node_str += getattr(n, "eof_trivia")
-            
-        if res and not res.endswith("\n") and node_str and not node_str.startswith("\n"):
+
+        if (
+            res
+            and not res.endswith("\n")
+            and node_str
+            and not node_str.startswith("\n")
+        ):
             res += "\n"
         res += node_str
 
@@ -735,7 +760,10 @@ def remove_child(parent: KdlNode, child_name: str) -> None:
     if existing:
         if not hasattr(parent, "_removed_children"):
             parent._removed_children = {}
-        parent._removed_children[child_name] = (parent.children.index(existing), existing)
+        parent._removed_children[child_name] = (
+            parent.children.index(existing),
+            existing,
+        )
         parent.children.remove(existing)
 
 
@@ -753,7 +781,10 @@ def set_node_flag(parent: KdlNode, flag_name: str, enabled: bool) -> None:
     elif not enabled and existing is not None:
         if not hasattr(parent, "_removed_children"):
             parent._removed_children = {}
-        parent._removed_children[flag_name] = (parent.children.index(existing), existing)
+        parent._removed_children[flag_name] = (
+            parent.children.index(existing),
+            existing,
+        )
         parent.children.remove(existing)
 
 

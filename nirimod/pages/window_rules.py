@@ -6,13 +6,15 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gtk, GLib, Pango
+from gi.repository import Adw, Gtk, GLib
 
 from nirimod.kdl_parser import KdlNode, KdlRawString
-from nirimod.pages.base import BasePage, make_toolbar_page
+from nirimod.pages.base import BasePage
 
 
 # ── Human-readable labels ────────────────────────────────────────────────────
+
+SCREENCAST_BLOCK_KEY = "block-out-from"
 
 BOOL_MATCH_LABELS = {
     "is-active": "Is Active",
@@ -25,7 +27,7 @@ BOOL_ACTION_LABELS = {
     "open-maximized": "Open Maximized",
     "open-fullscreen": "Open Fullscreen",
     "open-floating": "Open Floating",
-    "block-out-from-screencast": "Block from Screencast",
+    SCREENCAST_BLOCK_KEY: "Block from Screencast",
     "draw-border-with-background": "Draw Border with Background",
     "clip-to-geometry": "Clip to Geometry",
     "prefer-no-csd": "Prefer No CSD",
@@ -49,8 +51,28 @@ STR_ACTION_LABELS = {
 
 LAYER_BOOL_ACTION_LABELS = {
     "place-within-backdrop": "Place Within Backdrop",
-    "block-out-from-screencast": "Block from Screencast",
+    SCREENCAST_BLOCK_KEY: "Block from Screencast",
 }
+
+
+def _bool_action_active(rule: KdlNode | None, key: str) -> bool:
+    if rule is None:
+        return False
+    if key != SCREENCAST_BLOCK_KEY:
+        return rule.get_child(key) is not None
+
+    legacy = rule.get_child("block-out-from-screencast")
+    if legacy is not None:
+        return True
+
+    node = rule.get_child(SCREENCAST_BLOCK_KEY)
+    return node is not None and bool(node.args) and node.args[0] == "screencast"
+
+
+def _bool_action_node(key: str) -> KdlNode:
+    if key == SCREENCAST_BLOCK_KEY:
+        return KdlNode(SCREENCAST_BLOCK_KEY, args=["screencast"])
+    return KdlNode(key, args=[True])
 
 
 def _rule_summary(rule: KdlNode) -> tuple[str, str]:
@@ -100,6 +122,7 @@ def _layer_rule_summary(rule: KdlNode) -> tuple[str, str]:
 
 
 # ── Page ─────────────────────────────────────────────────────────────────────
+
 
 class WindowRulesPage(BasePage):
     def build(self) -> Gtk.Widget:
@@ -234,7 +257,9 @@ class WindowRulesPage(BasePage):
         match_node = rule.get_child("match") if rule else None
 
         app_id_row = Adw.EntryRow(title="App ID (regex, e.g. ^kitty$)")
-        app_id_row.set_text(str(match_node.props.get("app-id", "")) if match_node else "")
+        app_id_row.set_text(
+            str(match_node.props.get("app-id", "")) if match_node else ""
+        )
         match_grp.add(app_id_row)
 
         title_row = Adw.EntryRow(title="Window Title (regex)")
@@ -257,7 +282,7 @@ class WindowRulesPage(BasePage):
         bool_rows: dict[str, Adw.SwitchRow] = {}
         for key, label in BOOL_ACTION_LABELS.items():
             sr = Adw.SwitchRow(title=label)
-            sr.set_active(rule.get_child(key) is not None if rule else False)
+            sr.set_active(_bool_action_active(rule, key))
             layout_grp.add(sr)
             bool_rows[key] = sr
 
@@ -272,7 +297,9 @@ class WindowRulesPage(BasePage):
             if op_node and op_node.args:
                 op_val = float(op_node.args[0])
         op_adj = Gtk.Adjustment(value=op_val, lower=0.0, upper=1.0, step_increment=0.05)
-        op_row = Adw.SpinRow(title="Opacity (0 = unset, 1 = fully opaque)", adjustment=op_adj, digits=2)
+        op_row = Adw.SpinRow(
+            title="Opacity (0 = unset, 1 = fully opaque)", adjustment=op_adj, digits=2
+        )
         fx_grp.add(op_row)
 
         blur_row = Adw.SwitchRow(
@@ -284,7 +311,9 @@ class WindowRulesPage(BasePage):
             be = rule.get_child("background-effect")
             if be is not None:
                 blur_child = be.get_child("blur")
-                has_blur = blur_child is not None and (not blur_child.args or blur_child.args[0] is True)
+                has_blur = blur_child is not None and (
+                    not blur_child.args or blur_child.args[0] is True
+                )
         blur_row.set_active(has_blur)
         fx_grp.add(blur_row)
 
@@ -300,7 +329,9 @@ class WindowRulesPage(BasePage):
             if rule:
                 cn = rule.get_child(key)
                 cur = cn.args[0] if cn and cn.args else 0
-            adj = Gtk.Adjustment(value=float(cur), lower=lo, upper=hi, step_increment=step)
+            adj = Gtk.Adjustment(
+                value=float(cur), lower=lo, upper=hi, step_increment=step
+            )
             sr = Adw.SpinRow(title=label, adjustment=adj, digits=digits)
             dim_grp.add(sr)
             num_rows[key] = sr
@@ -368,7 +399,7 @@ class WindowRulesPage(BasePage):
             # bool actions
             for key, sr in bool_rows.items():
                 if sr.get_active():
-                    new_rule.children.append(KdlNode(key, args=[True]))
+                    new_rule.children.append(_bool_action_node(key))
 
             # opacity
             op = op_row.get_value()
@@ -488,7 +519,9 @@ class WindowRulesPage(BasePage):
 
         toolbar_view = Adw.ToolbarView()
         hdr = Adw.HeaderBar()
-        hdr.set_title_widget(Adw.WindowTitle(title="Edit Layer Rule" if rule else "New Layer Rule"))
+        hdr.set_title_widget(
+            Adw.WindowTitle(title="Edit Layer Rule" if rule else "New Layer Rule")
+        )
         toolbar_view.add_top_bar(hdr)
 
         prefs = Adw.PreferencesPage()
@@ -496,7 +529,9 @@ class WindowRulesPage(BasePage):
         match_grp = Adw.PreferencesGroup(title="Match")
         match_node = rule.get_child("match") if rule else None
         ns_entry = Adw.EntryRow(title="Namespace (regex, e.g. ^waybar$)")
-        ns_entry.set_text(str(match_node.props.get("namespace", "")) if match_node else "")
+        ns_entry.set_text(
+            str(match_node.props.get("namespace", "")) if match_node else ""
+        )
         match_grp.add(ns_entry)
         prefs.add(match_grp)
 
@@ -504,7 +539,7 @@ class WindowRulesPage(BasePage):
         bool_rows: dict[str, Adw.SwitchRow] = {}
         for key, label in LAYER_BOOL_ACTION_LABELS.items():
             sr = Adw.SwitchRow(title=label)
-            sr.set_active(rule.get_child(key) is not None if rule else False)
+            sr.set_active(_bool_action_active(rule, key))
             act_grp.add(sr)
             bool_rows[key] = sr
 
@@ -558,7 +593,7 @@ class WindowRulesPage(BasePage):
                 new_rule.children.append(m)
             for key, sr in bool_rows.items():
                 if sr.get_active():
-                    new_rule.children.append(KdlNode(key, args=[True]))
+                    new_rule.children.append(_bool_action_node(key))
             if blur_row.get_active():
                 be = KdlNode("background-effect")
                 be.children.append(KdlNode("blur", args=[True]))

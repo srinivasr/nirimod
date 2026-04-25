@@ -42,7 +42,9 @@ class TestKdlRoundTrip(unittest.TestCase):
         self.assertAlmostEqual(scale.args[0], 2.0)
 
     def test_boolean_values(self):
-        nodes = parse_kdl("input {\n    keyboard {\n        repeat-rate 30\n        xkb-numlock true\n    }\n}\n")
+        nodes = parse_kdl(
+            "input {\n    keyboard {\n        repeat-rate 30\n        xkb-numlock true\n    }\n}\n"
+        )
         kb = nodes[0].get_child("keyboard")
         self.assertIsNotNone(kb)
         numlock = kb.get_child("xkb-numlock")
@@ -50,12 +52,20 @@ class TestKdlRoundTrip(unittest.TestCase):
         self.assertIs(numlock.args[0], True)
 
     def test_raw_string(self):
-        text = 'spawn-at-startup r#"bash -c \'echo hi\'"#\n'
+        text = "spawn-at-startup r#\"bash -c 'echo hi'\"#\n"
         nodes = parse_kdl(text)
         self.assertIsInstance(nodes[0].args[0], KdlRawString)
 
+    def test_raw_string_property_preserves_backslash(self):
+        src = 'match app-id="steam" title=r#"^notificationtoasts_\\d+_desktop$"#\n'
+        nodes = parse_kdl(src)
+        title = nodes[0].props["title"]
+        self.assertIsInstance(title, KdlRawString)
+        self.assertEqual(title, r"^notificationtoasts_\d+_desktop$")
+        self.assertIn(r'title=r"^notificationtoasts_\d+_desktop$"', write_kdl(nodes))
+
     def test_write_preserves_children(self):
-        src = 'layout {\n    gaps 16\n    border {\n        width 2\n    }\n}\n'
+        src = "layout {\n    gaps 16\n    border {\n        width 2\n    }\n}\n"
         nodes = self._roundtrip(src)
         layout = nodes[0]
         self.assertEqual(layout.name, "layout")
