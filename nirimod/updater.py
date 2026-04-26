@@ -1,5 +1,7 @@
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -9,6 +11,17 @@ from gi.repository import GLib
 
 API_URL = "https://api.github.com/repos/srinivasr/nirimod/commits/main"
 INSTALL_DIR = os.path.expanduser("~/.local/share/nirimod")
+FALLBACK_TERMINALS = [
+    "xdg-terminal-exec",
+    "gnome-terminal",
+    "kgx",  # GNOME Console
+    "kitty",
+    "ghostty",
+    "alacritty",
+    "konsole",
+    "foot",
+    "xterm",
+]
 
 
 def check_for_updates(callback):
@@ -27,11 +40,15 @@ def check_for_updates(callback):
                 text=True,
             ).strip()
 
-            req = urllib.request.Request(API_URL, headers={"User-Agent": "NiriMod-Updater"})
+            req = urllib.request.Request(
+                API_URL, headers={"User-Agent": "NiriMod-Updater"}
+            )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 remote_hash = data.get("sha")
-                commit_msg = data.get("commit", {}).get("message", "New update available")
+                commit_msg = data.get("commit", {}).get(
+                    "message", "New update available"
+                )
 
             if remote_hash and remote_hash != local_hash:
                 GLib.idle_add(callback, remote_hash, commit_msg)
@@ -43,6 +60,31 @@ def check_for_updates(callback):
             GLib.idle_add(callback, None, None)
 
     threading.Thread(target=_do_check, daemon=True).start()
+
+
+def _terminal_candidates():
+    terminal = os.environ.get("TERMINAL", "").strip()
+    if terminal:
+        yield terminal
+    yield from FALLBACK_TERMINALS
+
+
+def _build_terminal_command(terminal: str, script_path: str) -> list[str] | None:
+    try:
+        parts = shlex.split(terminal)
+    except ValueError:
+        return None
+
+    if not parts:
+        return None
+
+    if os.path.basename(parts[0]) == "xdg-terminal-exec":
+        return [*parts, script_path]
+
+    if parts[-1] in {"-e", "--execute", "-x"}:
+        return [*parts, script_path]
+
+    return [*parts, "-e", script_path]
 
 
 def launch_updater_in_terminal():
@@ -59,26 +101,15 @@ read
         f.write(script_content)
     os.chmod(script_path, stat.S_IRWXU)
 
-    terminals = [
-        "xdg-terminal-exec",
-        "gnome-terminal",
-        "kgx",       # GNOME Console
-        "kitty",
-        "alacritty",
-        "konsole",
-        "foot",
-        "xterm",
-    ]
+    for term in _terminal_candidates():
+        command = _build_terminal_command(term, script_path)
+        if command is None or shutil.which(command[0]) is None:
+            continue
 
-    for term in terminals:
-        if subprocess.call(["which", term], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
-            try:
-                if term == "xdg-terminal-exec":
-                    subprocess.Popen([term, script_path])
-                else:
-                    subprocess.Popen([term, "-e", script_path])
-                return
-            except Exception:
-                continue
+        try:
+            subprocess.Popen(command)
+            return
+        except Exception:
+            continue
 
     print("Could not find a suitable terminal to launch the update.")
