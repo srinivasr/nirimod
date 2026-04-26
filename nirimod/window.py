@@ -645,7 +645,7 @@ class NiriModWindow(Adw.ApplicationWindow):
         elif "error" in message.lower() or "failed" in message.lower():
             toast.set_button_label("Copy")
             toast.connect("button-clicked", lambda *_: self.get_clipboard().set(message))
-            
+
         self._toast_overlay.add_toast(toast)
 
     def _check_onboarding(self):
@@ -657,7 +657,7 @@ class NiriModWindow(Adw.ApplicationWindow):
         filenames = "\n".join(f"  • <tt>{p.name}</tt>" for p in source_files)
         body = (
             f"NiriMod will back up your config files to\n"
-            f"<tt>~/.config/niri/backup/</tt>:\n\n"
+            f"<tt>{BACKUP_DIR}</tt>:\n\n"
             f"{filenames}\n"
         )
 
@@ -713,7 +713,7 @@ class NiriModWindow(Adw.ApplicationWindow):
                     except ValueError:
                         # Fallback if the source file is not under NIRI_CONFIG.parent
                         shutil.copy2(p, BACKUP_DIR / p.name)
-            self.show_toast("Backup created in ~/.config/niri/backup/ ✓")
+            self.show_toast(f"Backup created in {BACKUP_DIR} ✓")
         except Exception as e:
             self.show_toast(f"Backup failed: {e}", timeout=6)
 
@@ -743,7 +743,7 @@ class NiriModWindow(Adw.ApplicationWindow):
                         shutil.copy2(f, target)
                     elif f.is_dir():
                         _restore(f, dest_dir)
-                        
+
             _restore(BACKUP_DIR, NIRI_CONFIG.parent)
             shutil.rmtree(BACKUP_DIR)
             self.app_state.reload_from_disk()
