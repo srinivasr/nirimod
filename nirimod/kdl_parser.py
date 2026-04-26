@@ -13,9 +13,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-NIRI_CONFIG = Path.home() / ".config" / "niri" / "config.kdl"
-PROFILES_DIR = Path.home() / ".config" / "niri" / "profiles"
-BACKUP_DIR = Path.home() / ".config" / "niri" / "backup"
+_config_dir = Path(
+    os.environ.get("NIRIMOD_CONFIG_DIR", Path.home() / ".config" / "niri")
+)
+NIRI_CONFIG  = _config_dir / "config.kdl"
+PROFILES_DIR = _config_dir / "profiles"
+BACKUP_DIR   = _config_dir / "backup"
 
 
 class KdlRawString(str):
