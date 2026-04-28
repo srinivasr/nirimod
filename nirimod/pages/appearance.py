@@ -11,6 +11,20 @@ from gi.repository import Adw, Gdk, Gtk
 
 from nirimod.kdl_parser import KdlNode, find_or_create, set_child_arg, set_node_flag
 from nirimod.pages.base import BasePage
+from nirimod.window_effects import (
+    focused_window_blur_enabled,
+    get_global_draw_border_with_background,
+    get_global_corner_radius,
+    get_global_window_opacity,
+    global_window_blur_enabled,
+    global_window_xray_enabled,
+    set_focused_window_blur,
+    set_global_draw_border_with_background,
+    set_global_corner_radius,
+    set_global_window_blur,
+    set_global_window_opacity,
+    set_global_window_xray,
+)
 
 
 def _parse_color(color_str: str) -> Gdk.RGBA:
@@ -115,13 +129,83 @@ class AppearancePage(BasePage):
 
         blur_grp = Adw.PreferencesGroup(
             title="Blur (Global)",
-            description="Requires Niri 26.04 or later. Sets the global blur quality parameters.",
+            description=(
+                "Requires Niri 26.04 or later. Sets blur quality and optional "
+                "window blur rules."
+            ),
         )
         blur_node = next((n for n in nodes if n.name == "blur"), None)
 
+        blur_enabled_row = Adw.SwitchRow(
+            title="Enable Window Blur",
+            subtitle="Adds background-effect { blur true } to the global window rule",
+        )
+        blur_enabled_row.set_active(global_window_blur_enabled(nodes))
+        blur_enabled_row.connect(
+            "notify::active",
+            lambda r, _: self._set_window_blur_enabled(r.get_active()),
+        )
+        blur_grp.add(blur_enabled_row)
+
+        focused_blur_row = Adw.SwitchRow(
+            title="Keep Focused Windows Blurred",
+            subtitle="Adds a focused-window rule that forces blur on",
+        )
+        focused_blur_row.set_active(focused_window_blur_enabled(nodes))
+        focused_blur_row.connect(
+            "notify::active",
+            lambda r, _: self._set_focused_window_blur_enabled(r.get_active()),
+        )
+        blur_grp.add(focused_blur_row)
+
+        xray_row = Adw.SwitchRow(
+            title="Use Xray Wallpaper Blur",
+            subtitle="Use wallpaper-only blur; disable for regular background blur",
+        )
+        xray_row.set_active(global_window_xray_enabled(nodes))
+        xray_row.connect(
+            "notify::active",
+            lambda r, _: self._set_window_blur_xray(r.get_active()),
+        )
+        blur_grp.add(xray_row)
+
+        opacity_val = get_global_window_opacity(nodes)
+        opacity_adj = Gtk.Adjustment(
+            value=opacity_val, lower=0.1, upper=1.0, step_increment=0.05
+        )
+        opacity_row = Adw.SpinRow(
+            title="Window Opacity (1 = unset)", adjustment=opacity_adj, digits=2
+        )
+
+        opacity_row._last_val = opacity_val
+
+        def _on_opacity_changed(r, _):
+            new_val = round(float(r.get_value()), 2)
+            if new_val != getattr(r, "_last_val", None):
+                r._last_val = new_val
+                self._set_window_opacity(new_val)
+
+        opacity_row.connect("notify::value", _on_opacity_changed)
+        blur_grp.add(opacity_row)
+
+        border_bg_row = Adw.SwitchRow(
+            title="Draw Border With Background",
+            subtitle="Disable to avoid focus colors behind translucent windows",
+        )
+        border_bg_row.set_active(get_global_draw_border_with_background(nodes))
+        border_bg_row.connect(
+            "notify::active",
+            lambda r, _: self._set_draw_border_with_background(r.get_active()),
+        )
+        blur_grp.add(border_bg_row)
+
         passes_val = int(blur_node.child_arg("passes") if blur_node else 0)
-        passes_adj = Gtk.Adjustment(value=passes_val, lower=0, upper=10, step_increment=1)
-        passes_row = Adw.SpinRow(title="Passes (0 = disabled)", adjustment=passes_adj, digits=0)
+        passes_adj = Gtk.Adjustment(
+            value=passes_val, lower=0, upper=10, step_increment=1
+        )
+        passes_row = Adw.SpinRow(
+            title="Passes (0 = disabled)", adjustment=passes_adj, digits=0
+        )
 
         passes_row._last_val = passes_val
 
@@ -135,7 +219,9 @@ class AppearancePage(BasePage):
         blur_grp.add(passes_row)
 
         offset_val = float(blur_node.child_arg("offset") if blur_node else 2.0)
-        offset_adj = Gtk.Adjustment(value=offset_val, lower=0.0, upper=20.0, step_increment=0.1)
+        offset_adj = Gtk.Adjustment(
+            value=offset_val, lower=0.0, upper=20.0, step_increment=0.1
+        )
         offset_row = Adw.SpinRow(title="Offset", adjustment=offset_adj, digits=1)
 
         offset_row._last_val = offset_val
@@ -150,7 +236,9 @@ class AppearancePage(BasePage):
         blur_grp.add(offset_row)
 
         noise_val = float(blur_node.child_arg("noise") if blur_node else 0.0)
-        noise_adj = Gtk.Adjustment(value=noise_val, lower=0.0, upper=1.0, step_increment=0.01)
+        noise_adj = Gtk.Adjustment(
+            value=noise_val, lower=0.0, upper=1.0, step_increment=0.01
+        )
         noise_row = Adw.SpinRow(title="Noise", adjustment=noise_adj, digits=2)
 
         noise_row._last_val = noise_val
@@ -165,8 +253,12 @@ class AppearancePage(BasePage):
         blur_grp.add(noise_row)
 
         saturation_val = float(blur_node.child_arg("saturation") if blur_node else 1.0)
-        saturation_adj = Gtk.Adjustment(value=saturation_val, lower=0.0, upper=5.0, step_increment=0.1)
-        saturation_row = Adw.SpinRow(title="Saturation", adjustment=saturation_adj, digits=1)
+        saturation_adj = Gtk.Adjustment(
+            value=saturation_val, lower=0.0, upper=5.0, step_increment=0.1
+        )
+        saturation_row = Adw.SpinRow(
+            title="Saturation", adjustment=saturation_adj, digits=1
+        )
 
         saturation_row._last_val = saturation_val
 
@@ -183,19 +275,10 @@ class AppearancePage(BasePage):
 
         misc_grp = Adw.PreferencesGroup(title="Window Geometry")
 
-        # geometry-corner-radius is a window-rule-level setting but also applied globally
-        # get current cr if it exists
-        wr_nodes = [
-            n
-            for n in nodes
-            if n.name == "window-rule"
-            and not n.get_children("match")
-            and n.get_child("geometry-corner-radius")
-        ]
-        cr_val = int(wr_nodes[0].child_arg("geometry-corner-radius") if wr_nodes else 0)
+        cr_val = get_global_corner_radius(nodes)
         cr_adj = Gtk.Adjustment(value=cr_val, lower=0, upper=40, step_increment=1)
         cr_row = Adw.SpinRow(
-            title="Corner Radius (px, applied via window-rule)",
+            title="Corner Radius (px)",
             adjustment=cr_adj,
             digits=0,
         )
@@ -331,28 +414,28 @@ class AppearancePage(BasePage):
         set_child_arg(blur_node, prop, value)
         self._commit(f"blur {prop}")
 
-    def _set_corner_radius(self, radius: int):
-        # Apply via global window-rule
-        nodes = self._nodes
+    def _set_window_blur_enabled(self, enabled: bool):
+        set_global_window_blur(self._nodes, enabled)
+        self._commit("window blur")
 
-        wr = next(
-            (
-                n
-                for n in nodes
-                if n.name == "window-rule"
-                and n.get_child("geometry-corner-radius")
-                and not n.get_children("match")
-            ),
-            None,
-        )
-        if radius > 0:
-            if wr is None:
-                wr = KdlNode("window-rule")
-                nodes.append(wr)
-            set_child_arg(wr, "geometry-corner-radius", radius)
-            set_child_arg(wr, "clip-to-geometry", True)
-        elif wr is not None:
-            nodes.remove(wr)
+    def _set_focused_window_blur_enabled(self, enabled: bool):
+        set_focused_window_blur(self._nodes, enabled)
+        self._commit("focused window blur")
+
+    def _set_window_blur_xray(self, enabled: bool):
+        set_global_window_xray(self._nodes, enabled)
+        self._commit("window blur xray")
+
+    def _set_window_opacity(self, opacity: float):
+        set_global_window_opacity(self._nodes, opacity)
+        self._commit("window opacity")
+
+    def _set_draw_border_with_background(self, enabled: bool):
+        set_global_draw_border_with_background(self._nodes, enabled)
+        self._commit("draw border with background")
+
+    def _set_corner_radius(self, radius: int):
+        set_global_corner_radius(self._nodes, radius)
         self._commit("corner radius")
 
     def refresh(self):
