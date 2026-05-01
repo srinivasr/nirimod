@@ -57,8 +57,7 @@ LAYER_BOOL_ACTION_LABELS = {
 
 class WindowSizeControlConfig(NamedTuple):
     title: str
-    default: str
-    custom: float
+    initial_percent: float
     fixed: int
 
 
@@ -79,14 +78,12 @@ FIXED_SIZE_INDEX = CUSTOM_SIZE_INDEX + 1
 WINDOW_SIZE_CONTROLS = {
     "default-column-width": WindowSizeControlConfig(
         title="Default Width",
-        default="50%",
-        custom=50.0,
+        initial_percent=50.0,
         fixed=800,
     ),
     "default-window-height": WindowSizeControlConfig(
         title="Default Height",
-        default="100%",
-        custom=100.0,
+        initial_percent=100.0,
         fixed=600,
     ),
 }
@@ -361,20 +358,17 @@ class WindowRulesPage(BasePage):
 
         override_row = Adw.SwitchRow(
             title=f"Override {title}",
-            subtitle=f"Off uses niri default ({cfg.default})",
+            subtitle="Off writes no explicit size rule",
         )
         override_row.set_active(kind != "default")
         group.add(override_row)
 
         mode_model = Gtk.StringList.new(SIZE_MODE_LABELS)
         mode_row = Adw.ComboRow(title=title, model=mode_model)
-        selected = self._size_mode_index(kind, value)
-        if kind == "default":
-            selected = self._size_mode_index("proportion", cfg.custom / 100.0)
-        mode_row.set_selected(selected)
+        mode_row.set_selected(self._size_mode_index(kind, value))
         group.add(mode_row)
 
-        custom_value = cfg.custom
+        custom_value = cfg.initial_percent
         if kind == "proportion" and value is not None:
             custom_value = round(float(value) * 100.0, 2)
         custom_adj = Gtk.Adjustment(
@@ -494,7 +488,7 @@ class WindowRulesPage(BasePage):
         # ── Visibility & layout ───────────────────────────────────────────
         layout_grp = Adw.PreferencesGroup(
             title="Layout & Visibility",
-            description="Size overrides apply when a window opens; floating apps may need both width and height.",
+            description="Window-size overrides apply when a matching window opens.",
         )
 
         size_controls = {
