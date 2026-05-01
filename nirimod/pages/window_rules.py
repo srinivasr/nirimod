@@ -492,7 +492,10 @@ class WindowRulesPage(BasePage):
         prefs.add(match_grp)
 
         # ── Visibility & layout ───────────────────────────────────────────
-        layout_grp = Adw.PreferencesGroup(title="Layout & Visibility")
+        layout_grp = Adw.PreferencesGroup(
+            title="Layout & Visibility",
+            description="Size overrides apply when a window opens; floating apps may need both width and height.",
+        )
 
         size_controls = {
             key: self._add_size_controls(layout_grp, rule, key)
