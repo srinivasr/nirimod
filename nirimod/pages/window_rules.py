@@ -55,17 +55,19 @@ LAYER_BOOL_ACTION_LABELS = {
 }
 
 FLOATING_POSITION_PRESETS = [
-    ("Top", 0, 0, "top"),
-    ("Bottom", 0, 0, "bottom"),
-    ("Left", 0, 0, "left"),
-    ("Right", 0, 0, "right"),
+    ("Top", "top"),
+    ("Bottom", "bottom"),
+    ("Left", "left"),
+    ("Right", "right"),
 ]
 CUSTOM_FLOATING_POSITION_LABEL = "Custom"
 FLOATING_POSITION_LOCATION_LABELS = [
-    label for label, *_ in FLOATING_POSITION_PRESETS
+    label for label, _ in FLOATING_POSITION_PRESETS
 ] + [CUSTOM_FLOATING_POSITION_LABEL]
+FLOATING_POSITION_CUSTOM_FIELD_LABELS = ["X Offset (px)", "Y Offset (px)"]
 CUSTOM_FLOATING_POSITION_INDEX = len(FLOATING_POSITION_PRESETS)
 DEFAULT_FLOATING_POSITION_RELATIVE_TO = "top"
+CUSTOM_FLOATING_POSITION_RELATIVE_TO = "top-left"
 
 
 def _bool_action_active(rule: KdlNode | None, key: str) -> bool:
@@ -119,10 +121,9 @@ def _make_floating_position_node(
 
 
 def _floating_position_location_index(x: int, y: int, relative_to: str) -> int:
-    for index, (_, preset_x, preset_y, preset_relative_to) in enumerate(
-        FLOATING_POSITION_PRESETS
-    ):
-        if (x, y, relative_to) == (preset_x, preset_y, preset_relative_to):
+    del x, y
+    for index, (_, preset_relative_to) in enumerate(FLOATING_POSITION_PRESETS):
+        if relative_to == preset_relative_to:
             return index
     return CUSTOM_FLOATING_POSITION_INDEX
 
@@ -286,7 +287,7 @@ class WindowRulesPage(BasePage):
 
     def _add_floating_position_controls(
         self, group: Adw.PreferencesGroup, rule: KdlNode | None
-    ) -> dict[str, Gtk.Widget]:
+    ) -> dict[str, Gtk.Widget | str]:
         enabled, x, y, relative_to = _floating_position_setting(rule)
 
         enabled_row = Adw.SwitchRow(
@@ -301,10 +302,6 @@ class WindowRulesPage(BasePage):
         location_row.set_selected(_floating_position_location_index(x, y, relative_to))
         group.add(location_row)
 
-        relative_row = Adw.EntryRow(title="Relative To")
-        relative_row.set_text(relative_to)
-        group.add(relative_row)
-
         x_adj = Gtk.Adjustment(
             value=x,
             lower=-7680,
@@ -312,7 +309,11 @@ class WindowRulesPage(BasePage):
             step_increment=10,
             page_increment=100,
         )
-        x_row = Adw.SpinRow(title="X Offset (px)", adjustment=x_adj, digits=0)
+        x_row = Adw.SpinRow(
+            title=FLOATING_POSITION_CUSTOM_FIELD_LABELS[0],
+            adjustment=x_adj,
+            digits=0,
+        )
         group.add(x_row)
 
         y_adj = Gtk.Adjustment(
@@ -322,31 +323,37 @@ class WindowRulesPage(BasePage):
             step_increment=10,
             page_increment=100,
         )
-        y_row = Adw.SpinRow(title="Y Offset (px)", adjustment=y_adj, digits=0)
+        y_row = Adw.SpinRow(
+            title=FLOATING_POSITION_CUSTOM_FIELD_LABELS[1],
+            adjustment=y_adj,
+            digits=0,
+        )
         group.add(y_row)
 
         def _update_visibility(*_):
             active = enabled_row.get_active()
-            custom = location_row.get_selected() == CUSTOM_FLOATING_POSITION_INDEX
             location_row.set_visible(active)
-            relative_row.set_visible(active and custom)
-            x_row.set_visible(active and custom)
-            y_row.set_visible(active and custom)
+            x_row.set_visible(active)
+            y_row.set_visible(active)
 
         enabled_row.connect("notify::active", _update_visibility)
-        location_row.connect("notify::selected", _update_visibility)
         _update_visibility()
 
+        custom_relative_to = (
+            relative_to
+            if location_row.get_selected() == CUSTOM_FLOATING_POSITION_INDEX
+            else CUSTOM_FLOATING_POSITION_RELATIVE_TO
+        )
         return {
             "enabled": enabled_row,
             "location": location_row,
-            "relative": relative_row,
             "x": x_row,
             "y": y_row,
+            "custom_relative_to": custom_relative_to,
         }
 
     def _floating_position_node_from_controls(
-        self, controls: dict[str, Gtk.Widget]
+        self, controls: dict[str, Gtk.Widget | str]
     ) -> KdlNode | None:
         enabled_row = controls["enabled"]
         enabled = (
@@ -361,15 +368,14 @@ class WindowRulesPage(BasePage):
             else CUSTOM_FLOATING_POSITION_INDEX
         )
         if selected < CUSTOM_FLOATING_POSITION_INDEX:
-            _, x, y, relative_to = FLOATING_POSITION_PRESETS[selected]
-            return _make_floating_position_node(enabled, x, y, relative_to)
-
-        relative_row = controls["relative"]
-        relative_to = (
-            relative_row.get_text()
-            if isinstance(relative_row, Adw.EntryRow)
-            else DEFAULT_FLOATING_POSITION_RELATIVE_TO
-        )
+            _, relative_to = FLOATING_POSITION_PRESETS[selected]
+        else:
+            custom_relative_to = controls.get("custom_relative_to")
+            relative_to = (
+                custom_relative_to
+                if isinstance(custom_relative_to, str)
+                else CUSTOM_FLOATING_POSITION_RELATIVE_TO
+            )
         x_row = controls["x"]
         y_row = controls["y"]
         x = int(x_row.get_value()) if isinstance(x_row, Adw.SpinRow) else 0

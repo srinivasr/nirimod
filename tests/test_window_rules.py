@@ -9,11 +9,14 @@ pytest.importorskip("gi")
 
 from nirimod.kdl_parser import KdlNode, write_kdl
 from nirimod.pages.window_rules import (
+    CUSTOM_FLOATING_POSITION_INDEX,
     DEFAULT_FLOATING_POSITION_RELATIVE_TO,
+    FLOATING_POSITION_CUSTOM_FIELD_LABELS,
     FLOATING_POSITION_LOCATION_LABELS,
     SCREENCAST_BLOCK_KEY,
     _bool_action_active,
     _bool_action_node,
+    _floating_position_location_index,
     _floating_position_setting,
     _make_floating_position_node,
 )
@@ -52,6 +55,24 @@ class TestWindowRuleActions(unittest.TestCase):
         self.assertEqual(
             FLOATING_POSITION_LOCATION_LABELS,
             ["Top", "Bottom", "Left", "Right", "Custom"],
+        )
+
+    def test_floating_position_custom_fields_are_offsets_only(self):
+        self.assertEqual(
+            FLOATING_POSITION_CUSTOM_FIELD_LABELS,
+            ["X Offset (px)", "Y Offset (px)"],
+        )
+
+    def test_floating_position_edge_locations_allow_offsets(self):
+        self.assertEqual(
+            _floating_position_location_index(20, 0, "right"),
+            FLOATING_POSITION_LOCATION_LABELS.index("Right"),
+        )
+
+    def test_floating_position_custom_location_is_for_non_edge_anchors(self):
+        self.assertEqual(
+            _floating_position_location_index(12, 34, "bottom-right"),
+            CUSTOM_FLOATING_POSITION_INDEX,
         )
 
     def test_floating_position_writes_anchor_properties(self):
