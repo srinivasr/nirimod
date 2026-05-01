@@ -121,7 +121,8 @@ def _make_floating_position_node(
 
 
 def _floating_position_location_index(x: int, y: int, relative_to: str) -> int:
-    del x, y
+    if x != 0 or y != 0:
+        return CUSTOM_FLOATING_POSITION_INDEX
     for index, (_, preset_relative_to) in enumerate(FLOATING_POSITION_PRESETS):
         if relative_to == preset_relative_to:
             return index
@@ -332,11 +333,13 @@ class WindowRulesPage(BasePage):
 
         def _update_visibility(*_):
             active = enabled_row.get_active()
+            custom = location_row.get_selected() == CUSTOM_FLOATING_POSITION_INDEX
             location_row.set_visible(active)
-            x_row.set_visible(active)
-            y_row.set_visible(active)
+            x_row.set_visible(active and custom)
+            y_row.set_visible(active and custom)
 
         enabled_row.connect("notify::active", _update_visibility)
+        location_row.connect("notify::selected", _update_visibility)
         _update_visibility()
 
         custom_relative_to = (
@@ -369,6 +372,7 @@ class WindowRulesPage(BasePage):
         )
         if selected < CUSTOM_FLOATING_POSITION_INDEX:
             _, relative_to = FLOATING_POSITION_PRESETS[selected]
+            return _make_floating_position_node(enabled, 0, 0, relative_to)
         else:
             custom_relative_to = controls.get("custom_relative_to")
             relative_to = (

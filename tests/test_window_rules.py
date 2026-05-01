@@ -63,10 +63,16 @@ class TestWindowRuleActions(unittest.TestCase):
             ["X Offset (px)", "Y Offset (px)"],
         )
 
-    def test_floating_position_edge_locations_allow_offsets(self):
+    def test_floating_position_edge_locations_use_zero_offsets(self):
+        self.assertEqual(
+            _floating_position_location_index(0, 0, "right"),
+            FLOATING_POSITION_LOCATION_LABELS.index("Right"),
+        )
+
+    def test_floating_position_edge_offsets_are_custom(self):
         self.assertEqual(
             _floating_position_location_index(20, 0, "right"),
-            FLOATING_POSITION_LOCATION_LABELS.index("Right"),
+            CUSTOM_FLOATING_POSITION_INDEX,
         )
 
     def test_floating_position_custom_location_is_for_non_edge_anchors(self):
