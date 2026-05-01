@@ -171,6 +171,9 @@ def set_blur_effects_enabled(nodes: list[KdlNode], enabled: bool) -> None:
     set_node_flag(blur, "off", not enabled)
     _finalize_blur_config(blur)
     _remove_rule_if_empty(nodes, blur)
+    if not enabled:
+        set_global_window_blur(nodes, False)
+        set_focused_window_blur(nodes, False)
 
 
 def global_window_blur_enabled(nodes: list[KdlNode]) -> bool:
@@ -210,6 +213,7 @@ def set_global_window_blur(nodes: list[KdlNode], enabled: bool) -> None:
     if existing_effect is not None:
         remove_child(existing_effect, "blur")
         _remove_background_effect_if_empty(existing_rule)
+    remove_child(existing_rule, "opacity")
     _finalize_window_rule(existing_rule)
     _remove_rule_if_empty(nodes, existing_rule)
 

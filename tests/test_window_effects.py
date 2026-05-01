@@ -147,6 +147,60 @@ window-rule {
         self.assertIsNotNone(rule.get_child("background-effect").get_child("xray"))
         self.assertFalse(global_window_blur_enabled(nodes))
 
+    def test_disabling_blur_resets_window_opacity(self):
+        nodes = parse_kdl(
+            """
+window-rule {
+    opacity 0.95
+    background-effect {
+        blur true
+        xray false
+    }
+}
+"""
+        )
+
+        set_global_window_blur(nodes, False)
+
+        rule = nodes[0]
+        self.assertEqual(get_global_window_opacity(nodes), 1.0)
+        self.assertIsNone(rule.get_child("opacity"))
+        self.assertIsNone(rule.get_child("background-effect").get_child("blur"))
+        self.assertIsNotNone(rule.get_child("background-effect").get_child("xray"))
+
+    def test_disabling_blur_effects_clears_forced_blur_and_opacity(self):
+        nodes = parse_kdl(
+            """
+blur {
+    passes 3
+}
+window-rule {
+    opacity 0.9
+    background-effect {
+        blur true
+        xray false
+    }
+}
+window-rule {
+    match is-focused=true
+    background-effect {
+        blur true
+    }
+}
+"""
+        )
+
+        set_blur_effects_enabled(nodes, False)
+
+        out = write_kdl(nodes)
+        self.assertIn("off", out)
+        self.assertFalse(blur_effects_enabled(nodes))
+        self.assertFalse(global_window_blur_enabled(nodes))
+        self.assertFalse(focused_window_blur_enabled(nodes))
+        self.assertEqual(get_global_window_opacity(nodes), 1.0)
+        self.assertNotIn("blur true", out)
+        self.assertNotIn("opacity 0.9", out)
+
     def test_corner_radius_writes_clip_and_can_be_removed(self):
         nodes: list[KdlNode] = []
 
