@@ -7,7 +7,7 @@ name = "nirimod"
 version = "0.1.0"
 description = "A polished GTK4/libadwaita GUI configurator for the niri Wayland compositor"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     # PyGObject (gi.repository.Gtk, Adw) must be installed via system package manager:
