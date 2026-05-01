@@ -89,6 +89,40 @@ blur {
         self.assertIn("offset 3", out)
         self.assertTrue(blur_effects_enabled(nodes))
 
+    def test_enabling_blur_effects_sets_visible_default_opacity_when_unset(self):
+        nodes = parse_kdl(
+            """
+blur {
+    off
+    passes 3
+}
+"""
+        )
+
+        set_blur_effects_enabled(nodes, True)
+
+        out = write_kdl(nodes)
+        self.assertEqual(get_global_window_opacity(nodes), 0.9)
+        self.assertIn("opacity 0.9", out)
+
+    def test_enabling_blur_effects_preserves_existing_opacity(self):
+        nodes = parse_kdl(
+            """
+blur {
+    off
+    passes 3
+}
+window-rule {
+    opacity 0.75
+}
+"""
+        )
+
+        set_blur_effects_enabled(nodes, True)
+
+        self.assertEqual(get_global_window_opacity(nodes), 0.75)
+        self.assertIn("opacity 0.75", write_kdl(nodes))
+
     def test_enabling_blur_creates_matchless_window_rule(self):
         nodes: list[KdlNode] = []
 
