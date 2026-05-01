@@ -54,6 +54,18 @@ LAYER_BOOL_ACTION_LABELS = {
     SCREENCAST_BLOCK_KEY: "Block from Screencast",
 }
 
+FLOATING_POSITION_RELATIVE_TO_OPTIONS = [
+    "top-left",
+    "top-right",
+    "bottom-left",
+    "bottom-right",
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+DEFAULT_FLOATING_POSITION_RELATIVE_TO = "top-left"
+
 
 def _bool_action_active(rule: KdlNode | None, key: str) -> bool:
     if rule is None:
@@ -73,6 +85,37 @@ def _bool_action_node(key: str) -> KdlNode:
     if key == SCREENCAST_BLOCK_KEY:
         return KdlNode(SCREENCAST_BLOCK_KEY, args=["screencast"])
     return KdlNode(key, args=[True])
+
+
+def _floating_position_setting(rule: KdlNode | None) -> tuple[bool, int, int, str]:
+    if rule is None:
+        return (False, 0, 0, DEFAULT_FLOATING_POSITION_RELATIVE_TO)
+
+    node = rule.get_child("default-floating-position")
+    if node is None:
+        return (False, 0, 0, DEFAULT_FLOATING_POSITION_RELATIVE_TO)
+
+    x = int(node.props.get("x", 0))
+    y = int(node.props.get("y", 0))
+    relative_to = str(
+        node.props.get("relative-to", DEFAULT_FLOATING_POSITION_RELATIVE_TO)
+    )
+    if relative_to not in FLOATING_POSITION_RELATIVE_TO_OPTIONS:
+        relative_to = DEFAULT_FLOATING_POSITION_RELATIVE_TO
+    return (True, x, y, relative_to)
+
+
+def _make_floating_position_node(
+    enabled: bool, x: int, y: int, relative_to: str
+) -> KdlNode | None:
+    if not enabled:
+        return None
+    if relative_to not in FLOATING_POSITION_RELATIVE_TO_OPTIONS:
+        relative_to = DEFAULT_FLOATING_POSITION_RELATIVE_TO
+    return KdlNode(
+        "default-floating-position",
+        props={"x": int(x), "y": int(y), "relative-to": relative_to},
+    )
 
 
 def _rule_summary(rule: KdlNode) -> tuple[str, str]:
@@ -232,6 +275,86 @@ class WindowRulesPage(BasePage):
         t.connect("button-clicked", lambda *_: self._win._do_undo())
         self._win._toast_overlay.add_toast(t)
 
+    def _add_floating_position_controls(
+        self, group: Adw.PreferencesGroup, rule: KdlNode | None
+    ) -> dict[str, Gtk.Widget]:
+        enabled, x, y, relative_to = _floating_position_setting(rule)
+
+        enabled_row = Adw.SwitchRow(
+            title="Default Floating Position",
+            subtitle="Set the initial position for matching floating windows",
+        )
+        enabled_row.set_active(enabled)
+        group.add(enabled_row)
+
+        relative_model = Gtk.StringList.new(FLOATING_POSITION_RELATIVE_TO_OPTIONS)
+        relative_row = Adw.ComboRow(title="Relative To", model=relative_model)
+        relative_row.set_selected(
+            FLOATING_POSITION_RELATIVE_TO_OPTIONS.index(relative_to)
+        )
+        group.add(relative_row)
+
+        x_adj = Gtk.Adjustment(
+            value=x,
+            lower=-7680,
+            upper=7680,
+            step_increment=10,
+            page_increment=100,
+        )
+        x_row = Adw.SpinRow(title="X Offset (px)", adjustment=x_adj, digits=0)
+        group.add(x_row)
+
+        y_adj = Gtk.Adjustment(
+            value=y,
+            lower=-7680,
+            upper=7680,
+            step_increment=10,
+            page_increment=100,
+        )
+        y_row = Adw.SpinRow(title="Y Offset (px)", adjustment=y_adj, digits=0)
+        group.add(y_row)
+
+        def _update_visibility(*_):
+            active = enabled_row.get_active()
+            relative_row.set_visible(active)
+            x_row.set_visible(active)
+            y_row.set_visible(active)
+
+        enabled_row.connect("notify::active", _update_visibility)
+        _update_visibility()
+
+        return {
+            "enabled": enabled_row,
+            "relative": relative_row,
+            "x": x_row,
+            "y": y_row,
+        }
+
+    def _floating_position_node_from_controls(
+        self, controls: dict[str, Gtk.Widget]
+    ) -> KdlNode | None:
+        enabled_row = controls["enabled"]
+        enabled = (
+            enabled_row.get_active()
+            if isinstance(enabled_row, Adw.SwitchRow)
+            else False
+        )
+        relative_row = controls["relative"]
+        selected = (
+            relative_row.get_selected()
+            if isinstance(relative_row, Adw.ComboRow)
+            else FLOATING_POSITION_RELATIVE_TO_OPTIONS.index(
+                DEFAULT_FLOATING_POSITION_RELATIVE_TO
+            )
+        )
+        x_row = controls["x"]
+        y_row = controls["y"]
+        x = int(x_row.get_value()) if isinstance(x_row, Adw.SpinRow) else 0
+        y = int(y_row.get_value()) if isinstance(y_row, Adw.SpinRow) else 0
+        return _make_floating_position_node(
+            enabled, x, y, FLOATING_POSITION_RELATIVE_TO_OPTIONS[selected]
+        )
+
     def _show_rule_dialog(self, rule: KdlNode | None, rule_idx: int):
         dialog = Adw.Dialog(title="Window Rule")
         dialog.set_content_width(520)
@@ -285,6 +408,10 @@ class WindowRulesPage(BasePage):
             sr.set_active(_bool_action_active(rule, key))
             layout_grp.add(sr)
             bool_rows[key] = sr
+
+        floating_position_controls = self._add_floating_position_controls(
+            layout_grp, rule
+        )
 
         prefs.add(layout_grp)
 
@@ -400,6 +527,12 @@ class WindowRulesPage(BasePage):
             for key, sr in bool_rows.items():
                 if sr.get_active():
                     new_rule.children.append(_bool_action_node(key))
+
+            position_node = self._floating_position_node_from_controls(
+                floating_position_controls
+            )
+            if position_node is not None:
+                new_rule.children.append(position_node)
 
             # opacity
             op = op_row.get_value()

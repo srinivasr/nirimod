@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import unittest
 import pytest
+
 pytest.importorskip("gi")
 
 from nirimod.kdl_parser import KdlNode, write_kdl
 from nirimod.pages.window_rules import (
+    DEFAULT_FLOATING_POSITION_RELATIVE_TO,
     SCREENCAST_BLOCK_KEY,
     _bool_action_active,
     _bool_action_node,
+    _floating_position_setting,
+    _make_floating_position_node,
 )
 
 
@@ -35,6 +39,38 @@ class TestWindowRuleActions(unittest.TestCase):
         )
 
         self.assertTrue(_bool_action_active(rule, SCREENCAST_BLOCK_KEY))
+
+    def test_floating_position_default_writes_no_override(self):
+        self.assertIsNone(
+            _make_floating_position_node(
+                False, 0, 0, DEFAULT_FLOATING_POSITION_RELATIVE_TO
+            )
+        )
+
+    def test_floating_position_writes_anchor_properties(self):
+        node = _make_floating_position_node(True, 0, 0, "right")
+        out = write_kdl([KdlNode("window-rule", children=[node])])
+
+        self.assertIn(
+            'default-floating-position x=0 y=0 relative-to="right"',
+            out,
+        )
+
+    def test_floating_position_reads_existing_anchor(self):
+        rule = KdlNode(
+            "window-rule",
+            children=[
+                KdlNode(
+                    "default-floating-position",
+                    props={"x": 12, "y": 34, "relative-to": "bottom-right"},
+                )
+            ],
+        )
+
+        self.assertEqual(
+            _floating_position_setting(rule),
+            (True, 12, 34, "bottom-right"),
+        )
 
 
 if __name__ == "__main__":
