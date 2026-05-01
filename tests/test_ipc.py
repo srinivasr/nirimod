@@ -83,6 +83,35 @@ class TestValidateConfig(unittest.TestCase):
         self.assertIn("/tmp/test.kdl", captured["args"])
 
 
+class TestLoadConfigFile(unittest.TestCase):
+    def test_load_config_file_calls_niri_action(self):
+        from nirimod import niri_ipc
+
+        captured = {}
+
+        def fake_run(args, timeout=5.0):
+            captured["args"] = args
+            captured["timeout"] = timeout
+            return ("", "", 0)
+
+        with patch.object(niri_ipc, "_run_sync", side_effect=fake_run):
+            ok, msg = niri_ipc.load_config_file()
+
+        self.assertTrue(ok)
+        self.assertEqual(captured["args"], ["niri", "msg", "action", "load-config-file"])
+        self.assertEqual(captured["timeout"], 10.0)
+        self.assertIn("applied", msg)
+
+    def test_load_config_file_reports_failure(self):
+        from nirimod import niri_ipc
+
+        with patch.object(niri_ipc, "_run_sync", return_value=("", "reload failed", 1)):
+            ok, msg = niri_ipc.load_config_file()
+
+        self.assertFalse(ok)
+        self.assertIn("reload failed", msg)
+
+
 class TestHasTouchpad(unittest.TestCase):
     def test_caching(self):
         import nirimod.niri_ipc as ipc_mod

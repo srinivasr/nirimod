@@ -563,6 +563,22 @@ class NiriModWindow(Adw.ApplicationWindow):
 
     def _on_save(self):
         new_kdl = self.app_state.write_current_kdl()
+
+        def _finish_save(reload_result):
+            reload_ok, reload_msg = reload_result
+            self.app_state.commit_save(new_kdl)
+            raw = self._pages.get("raw_config")
+            if raw and hasattr(raw, "refresh"):
+                raw.refresh()
+                self._build_search_index()
+            self.mark_clean()
+            if reload_ok:
+                self.show_toast("Config saved and applied ✓", timeout=3)
+            else:
+                self.show_toast(
+                    f"Config saved, but reload failed: {reload_msg}", timeout=8
+                )
+
         if self.app_state.is_multi_file:
             # Snapshot all source files before touching them
             snapshots = {
@@ -578,13 +594,7 @@ class NiriModWindow(Adw.ApplicationWindow):
                         p.write_text(text)
                     self.show_toast(f"Validation error: {msg}", timeout=8)
                     return
-                self.app_state.commit_save(new_kdl)
-                raw = self._pages.get("raw_config")
-                if raw and hasattr(raw, "refresh"):
-                    raw.refresh()
-                    self._build_search_index()
-                self.mark_clean()
-                self.show_toast("Config saved and applied ✓", timeout=3)
+                niri_ipc.run_in_thread(niri_ipc.load_config_file, _finish_save)
 
             niri_ipc.run_in_thread(
                 lambda: niri_ipc.validate_config(), _on_validated
@@ -600,13 +610,7 @@ class NiriModWindow(Adw.ApplicationWindow):
                     tmp_kdl.unlink(missing_ok=True)
                     return
                 shutil.move(tmp_kdl, NIRI_CONFIG)
-                self.app_state.commit_save(new_kdl)
-                raw = self._pages.get("raw_config")
-                if raw and hasattr(raw, "refresh"):
-                    raw.refresh()
-                    self._build_search_index()
-                self.mark_clean()
-                self.show_toast("Config saved and applied ✓", timeout=3)
+                niri_ipc.run_in_thread(niri_ipc.load_config_file, _finish_save)
 
             niri_ipc.run_in_thread(
                 lambda: niri_ipc.validate_config(str(tmp_kdl)), _on_validated
@@ -677,7 +681,8 @@ class NiriModWindow(Adw.ApplicationWindow):
 
     def _check_kofi(self):
         from nirimod import app_settings
-        import subprocess, os
+        import os
+        import subprocess
         from nirimod.updater import INSTALL_DIR
         
 
