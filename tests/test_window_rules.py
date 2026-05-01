@@ -10,6 +10,7 @@ pytest.importorskip("gi")
 from nirimod.kdl_parser import KdlNode, write_kdl
 from nirimod.pages.window_rules import (
     DEFAULT_FLOATING_POSITION_RELATIVE_TO,
+    FLOATING_POSITION_LOCATION_LABELS,
     SCREENCAST_BLOCK_KEY,
     _bool_action_active,
     _bool_action_node,
@@ -47,12 +48,27 @@ class TestWindowRuleActions(unittest.TestCase):
             )
         )
 
+    def test_floating_position_locations_are_edges_plus_custom(self):
+        self.assertEqual(
+            FLOATING_POSITION_LOCATION_LABELS,
+            ["Top", "Bottom", "Left", "Right", "Custom"],
+        )
+
     def test_floating_position_writes_anchor_properties(self):
         node = _make_floating_position_node(True, 0, 0, "right")
         out = write_kdl([KdlNode("window-rule", children=[node])])
 
         self.assertIn(
             'default-floating-position x=0 y=0 relative-to="right"',
+            out,
+        )
+
+    def test_floating_position_writes_custom_offset(self):
+        node = _make_floating_position_node(True, 12, 34, "right")
+        out = write_kdl([KdlNode("window-rule", children=[node])])
+
+        self.assertIn(
+            'default-floating-position x=12 y=34 relative-to="right"',
             out,
         )
 
