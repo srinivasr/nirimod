@@ -196,6 +196,8 @@ def _rule_blur_enabled(rule: KdlNode | None) -> bool:
 def set_global_window_blur(nodes: list[KdlNode], enabled: bool) -> None:
     if enabled:
         rule = _ensure_global_window_rule(nodes)
+        if _rule_opacity(rule) >= 1.0:
+            set_child_arg(rule, "opacity", 0.9)
         effect = _ensure_background_effect(rule)
         set_child_arg(effect, "blur", True)
         _finalize_window_rule(rule)

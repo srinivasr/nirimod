@@ -101,6 +101,28 @@ blur {
         self.assertNotIn("draw-border-with-background", out)
         self.assertTrue(global_window_blur_enabled(nodes))
 
+    def test_enabling_blur_sets_visible_default_opacity_when_unset(self):
+        nodes: list[KdlNode] = []
+
+        set_global_window_blur(nodes, True)
+
+        self.assertEqual(get_global_window_opacity(nodes), 0.9)
+        self.assertIn("opacity 0.9", write_kdl(nodes))
+
+    def test_enabling_blur_preserves_existing_opacity(self):
+        nodes = parse_kdl(
+            """
+window-rule {
+    opacity 0.75
+}
+"""
+        )
+
+        set_global_window_blur(nodes, True)
+
+        self.assertEqual(get_global_window_opacity(nodes), 0.75)
+        self.assertIn("opacity 0.75", write_kdl(nodes))
+
     def test_disabling_blur_preserves_other_window_effect_settings(self):
         nodes = parse_kdl(
             """
