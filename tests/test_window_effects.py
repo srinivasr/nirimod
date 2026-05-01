@@ -6,6 +6,7 @@ import unittest
 
 from nirimod.kdl_parser import KdlNode, parse_kdl, write_kdl
 from nirimod.window_effects import (
+    blur_effects_enabled,
     focused_window_blur_enabled,
     get_global_draw_border_with_background,
     get_global_corner_radius,
@@ -18,10 +19,76 @@ from nirimod.window_effects import (
     set_global_window_blur,
     set_global_window_opacity,
     set_global_window_xray,
+    set_blur_effects_enabled,
 )
 
 
 class TestGlobalWindowEffects(unittest.TestCase):
+    def test_blur_effects_are_enabled_without_top_level_off(self):
+        nodes = parse_kdl(
+            """
+blur {
+    passes 3
+    offset 3
+}
+"""
+        )
+
+        self.assertTrue(blur_effects_enabled(nodes))
+
+    def test_disabling_blur_effects_writes_top_level_off(self):
+        nodes: list[KdlNode] = []
+
+        set_blur_effects_enabled(nodes, False)
+
+        out = write_kdl(nodes)
+        self.assertIn("blur", out)
+        self.assertIn("off", out)
+        self.assertNotIn("off true", out)
+        self.assertFalse(blur_effects_enabled(nodes))
+
+    def test_disabling_blur_effects_preserves_quality_settings(self):
+        nodes = parse_kdl(
+            """
+blur {
+    passes 3
+    offset 3
+    noise 0.02
+    saturation 1.5
+}
+"""
+        )
+
+        set_blur_effects_enabled(nodes, False)
+
+        out = write_kdl(nodes)
+        self.assertIn("off", out)
+        self.assertIn("passes 3", out)
+        self.assertIn("offset 3", out)
+        self.assertIn("noise 0.02", out)
+        self.assertIn("saturation 1.5", out)
+        self.assertNotIn("off true", out)
+
+    def test_enabling_blur_effects_removes_only_off(self):
+        nodes = parse_kdl(
+            """
+blur {
+    off
+    passes 3
+    offset 3
+}
+"""
+        )
+
+        set_blur_effects_enabled(nodes, True)
+
+        out = write_kdl(nodes)
+        blur = parse_kdl(out)[0]
+        self.assertIsNone(blur.get_child("off"))
+        self.assertIn("passes 3", out)
+        self.assertIn("offset 3", out)
+        self.assertTrue(blur_effects_enabled(nodes))
+
     def test_enabling_blur_creates_matchless_window_rule(self):
         nodes: list[KdlNode] = []
 

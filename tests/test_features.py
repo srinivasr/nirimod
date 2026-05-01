@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("DISPLAY", ":0")
 os.environ.setdefault("WAYLAND_DISPLAY", "wayland-1")
 
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 PASS = "[PASS]"
 WARN = "[WARN]"
 FAIL = "[FAIL]"
@@ -22,13 +22,15 @@ def test(name, fn):
         results.append((FAIL, name, f"{type(e).__name__}: {e}"))
         traceback.print_exc()
 
+
+test.__test__ = False
+
 # KDL Parser
 from nirimod.kdl_parser import parse_kdl, write_kdl, KdlNode
 
 def t_kdl_roundtrip():
     src = 'output "eDP-1" { scale 2.0; }\nbinds { XF86AudioRaise { action "volume-up"; } }'
     nodes = parse_kdl(src)
-    out = write_kdl(nodes)
     assert nodes, "no nodes parsed"
     return f"{len(nodes)} nodes"
 
@@ -164,7 +166,7 @@ page_modules = [
 import importlib
 for name, module_path in page_modules:
     def _test(mp=module_path, n=name):
-        mod = importlib.import_module(mp)
+        importlib.import_module(mp)
         return "module imported OK"
     test(f"Page import: {name}", _test)
 
@@ -173,7 +175,6 @@ import shlex
 
 def t_startup_spawn_sh():
     cmd = "waybar --config /etc/waybar.json"
-    args = shlex.split(cmd)
     node = KdlNode("spawn-sh-at-startup", args=[cmd])   # single string for sh
     assert node.args[0] == cmd
     return f"spawn-sh-at-startup args = {node.args}"
@@ -276,30 +277,35 @@ from nirimod import app_settings
 def t_app_settings():
     original = app_settings.get("auto_update", True)
     app_settings.set("auto_update", False)
-    assert app_settings.get("auto_update") == False
+    assert not app_settings.get("auto_update")
     app_settings.set("auto_update", original)
     return "get/set OK"
 
 test("AppSettings: get/set", t_app_settings)
 
-# Print Results
-print("\n" + "="*50)
-print("  NIRIMOD FEATURE TEST REPORT")
-print("="*50)
+def _print_results() -> int:
+    print("\n" + "="*50)
+    print("  NIRIMOD FEATURE TEST REPORT")
+    print("="*50)
 
-passed = sum(1 for r in results if r[0] == PASS)
-failed = sum(1 for r in results if r[0] == FAIL)
-warned = sum(1 for r in results if r[0] == WARN)
+    passed = sum(1 for r in results if r[0] == PASS)
+    failed = sum(1 for r in results if r[0] == FAIL)
+    warned = sum(1 for r in results if r[0] == WARN)
 
-for icon, name, detail in results:
-    status = f"{icon} {name}"
-    if detail:
-        print(f"{status}\n     → {detail}")
-    else:
-        print(status)
+    for icon, name, detail in results:
+        status = f"{icon} {name}"
+        if detail:
+            print(f"{status}\n     → {detail}")
+        else:
+            print(status)
 
-print("="*50)
-print(f"  {passed} passed  |  {warned} warnings  |  {failed} failed  |  {len(results)} total")
-print("="*50)
+    print("="*50)
+    print(
+        f"  {passed} passed  |  {warned} warnings  |  {failed} failed  |  {len(results)} total"
+    )
+    print("="*50)
+    return failed
 
-sys.exit(1 if failed else 0)
+
+if __name__ == "__main__":
+    sys.exit(1 if _print_results() else 0)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nirimod.kdl_parser import KdlNode, remove_child, set_child_arg
+from nirimod.kdl_parser import KdlNode, remove_child, set_child_arg, set_node_flag
 
 _RULE_CHILD_ORDER = [
     "match",
@@ -15,6 +15,7 @@ _RULE_CHILD_ORDER = [
 ]
 
 _EFFECT_CHILD_ORDER = ["blur", "xray"]
+_BLUR_CONFIG_CHILD_ORDER = ["off", "passes", "offset", "noise", "saturation"]
 
 
 def _is_global_window_rule(node: KdlNode) -> bool:
@@ -41,6 +42,19 @@ def _global_window_rule(nodes: list[KdlNode]) -> KdlNode | None:
 
 def _focused_window_rule(nodes: list[KdlNode]) -> KdlNode | None:
     return next((n for n in reversed(nodes) if _is_focused_window_rule(n)), None)
+
+
+def _blur_config_node(nodes: list[KdlNode]) -> KdlNode | None:
+    return next((n for n in reversed(nodes) if n.name == "blur"), None)
+
+
+def _ensure_blur_config_node(nodes: list[KdlNode]) -> KdlNode:
+    blur = _blur_config_node(nodes)
+    if blur is None:
+        blur = KdlNode("blur")
+        blur.leading_trivia = "\n"
+        nodes.append(blur)
+    return blur
 
 
 def _ensure_global_window_rule(nodes: list[KdlNode]) -> KdlNode:
@@ -115,6 +129,11 @@ def _finalize_window_rule(rule: KdlNode) -> None:
     _compact_generated_spacing(rule)
 
 
+def _finalize_blur_config(blur: KdlNode) -> None:
+    _sort_children_by_name(blur, _BLUR_CONFIG_CHILD_ORDER)
+    _compact_generated_spacing(blur)
+
+
 def _rule_opacity(rule: KdlNode | None) -> float:
     if rule is None:
         return 1.0
@@ -140,6 +159,18 @@ def set_global_draw_border_with_background(nodes: list[KdlNode], enabled: bool) 
         set_child_arg(rule, "draw-border-with-background", False)
     _finalize_window_rule(rule)
     _remove_rule_if_empty(nodes, rule)
+
+
+def blur_effects_enabled(nodes: list[KdlNode]) -> bool:
+    blur = _blur_config_node(nodes)
+    return blur is None or blur.get_child("off") is None
+
+
+def set_blur_effects_enabled(nodes: list[KdlNode], enabled: bool) -> None:
+    blur = _ensure_blur_config_node(nodes)
+    set_node_flag(blur, "off", not enabled)
+    _finalize_blur_config(blur)
+    _remove_rule_if_empty(nodes, blur)
 
 
 def global_window_blur_enabled(nodes: list[KdlNode]) -> bool:

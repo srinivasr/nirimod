@@ -138,12 +138,31 @@ class TestMutationHelpers(unittest.TestCase):
         parent = KdlNode("input")
         set_node_flag(parent, "warp-mouse-to-focus", True)
         self.assertIsNotNone(parent.get_child("warp-mouse-to-focus"))
+        self.assertEqual(parent.get_child("warp-mouse-to-focus").args, [])
+
+    def test_set_node_flag_serializes_bare_flag(self):
+        parent = KdlNode("blur")
+
+        set_node_flag(parent, "off", True)
+
+        self.assertIn("off", write_kdl([parent]))
+        self.assertNotIn("off true", write_kdl([parent]))
 
     def test_set_node_flag_remove(self):
         parent = KdlNode("input")
         parent.children.append(KdlNode("warp-mouse-to-focus"))
         set_node_flag(parent, "warp-mouse-to-focus", False)
         self.assertIsNone(parent.get_child("warp-mouse-to-focus"))
+
+    def test_set_node_flag_restores_bare_flag(self):
+        parent = KdlNode("blur")
+        parent.children.append(KdlNode("off"))
+
+        set_node_flag(parent, "off", False)
+        set_node_flag(parent, "off", True)
+
+        self.assertIn("off", write_kdl([parent]))
+        self.assertNotIn("off true", write_kdl([parent]))
 
     def test_set_node_flag_idempotent_add(self):
         parent = KdlNode("input")

@@ -743,15 +743,19 @@ def remove_child(parent: KdlNode, child_name: str) -> None:
 
 def set_node_flag(parent: KdlNode, flag_name: str, enabled: bool) -> None:
     existing = parent.get_child(flag_name)
-    if enabled and existing is None:
+    if enabled:
+        if existing is not None:
+            existing.args = []
+            existing.props = {}
+            return
         cache = getattr(parent, "_removed_children", {})
         if flag_name in cache:
             idx, node = cache[flag_name]
-            if not node.args:
-                node.args = [True]
+            node.args = []
+            node.props = {}
             parent.children.insert(min(idx, len(parent.children)), node)
         else:
-            new_node = KdlNode(name=flag_name, args=[True])
+            new_node = KdlNode(name=flag_name)
             new_node.leading_trivia = "\n"
             parent.children.insert(0, new_node)
     elif not enabled and existing is not None:

@@ -12,6 +12,7 @@ from gi.repository import Adw, Gdk, Gtk
 from nirimod.kdl_parser import KdlNode, find_or_create, set_child_arg, set_node_flag
 from nirimod.pages.base import BasePage
 from nirimod.window_effects import (
+    blur_effects_enabled,
     focused_window_blur_enabled,
     get_global_draw_border_with_background,
     get_global_corner_radius,
@@ -24,6 +25,7 @@ from nirimod.window_effects import (
     set_global_window_blur,
     set_global_window_opacity,
     set_global_window_xray,
+    set_blur_effects_enabled,
 )
 
 
@@ -136,8 +138,19 @@ class AppearancePage(BasePage):
         )
         blur_node = next((n for n in nodes if n.name == "blur"), None)
 
+        blur_effects_row = Adw.SwitchRow(
+            title="Enable Blur Effects",
+            subtitle="Controls the compositor-level blur { off } setting",
+        )
+        blur_effects_row.set_active(blur_effects_enabled(nodes))
+        blur_effects_row.connect(
+            "notify::active",
+            lambda r, _: self._set_blur_effects_enabled(r.get_active()),
+        )
+        blur_grp.add(blur_effects_row)
+
         blur_enabled_row = Adw.SwitchRow(
-            title="Enable Window Blur",
+            title="Force Blur on Windows",
             subtitle="Adds background-effect { blur true } to the global window rule",
         )
         blur_enabled_row.set_active(global_window_blur_enabled(nodes))
@@ -204,7 +217,7 @@ class AppearancePage(BasePage):
             value=passes_val, lower=0, upper=10, step_increment=1
         )
         passes_row = Adw.SpinRow(
-            title="Passes (0 = disabled)", adjustment=passes_adj, digits=0
+            title="Passes", adjustment=passes_adj, digits=0
         )
 
         passes_row._last_val = passes_val
@@ -401,16 +414,13 @@ class AppearancePage(BasePage):
         self._commit("shadow color")
 
     def _set_blur(self, prop: str, value):
-
-        if prop == "passes" and int(value) == 0:
-            blur_node = next((n for n in self._nodes if n.name == "blur"), None)
-            if blur_node is not None:
-                self._nodes.remove(blur_node)
-            self._commit("blur removed")
-            return
         blur_node = find_or_create(self._nodes, "blur")
         set_child_arg(blur_node, prop, value)
         self._commit(f"blur {prop}")
+
+    def _set_blur_effects_enabled(self, enabled: bool):
+        set_blur_effects_enabled(self._nodes, enabled)
+        self._commit("blur effects")
 
     def _set_window_blur_enabled(self, enabled: bool):
         set_global_window_blur(self._nodes, enabled)
