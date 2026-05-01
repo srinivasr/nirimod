@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -40,18 +42,53 @@ NUM_ACTION_LABELS = {
     "min-height": ("Min Height (px)", 0, 7680, 1, 0),
     "max-width": ("Max Width (px)", 0, 7680, 1, 0),
     "max-height": ("Max Height (px)", 0, 7680, 1, 0),
-    "default-window-height": ("Default Window Height (px)", 0, 7680, 1, 0),
 }
 
 STR_ACTION_LABELS = {
     "open-on-workspace": "Open on Workspace",
     "open-on-output": "Open on Output",
-    "default-column-width": "Default Column Width",
 }
 
 LAYER_BOOL_ACTION_LABELS = {
     "place-within-backdrop": "Place Within Backdrop",
     SCREENCAST_BLOCK_KEY: "Block from Screencast",
+}
+
+
+class WindowSizeControlConfig(NamedTuple):
+    title: str
+    default: str
+    custom: float
+    fixed: int
+
+
+SIZE_PERCENT_PRESETS = [
+    ("25%", 0.25),
+    ("33%", 0.33333),
+    ("50%", 0.5),
+    ("66%", 0.66667),
+    ("75%", 0.75),
+    ("100%", 1.0),
+]
+SIZE_MODE_LABELS = [label for label, _ in SIZE_PERCENT_PRESETS] + [
+    "Custom %",
+    "Fixed (px)",
+]
+CUSTOM_SIZE_INDEX = len(SIZE_PERCENT_PRESETS)
+FIXED_SIZE_INDEX = CUSTOM_SIZE_INDEX + 1
+WINDOW_SIZE_CONTROLS = {
+    "default-column-width": WindowSizeControlConfig(
+        title="Default Width",
+        default="50%",
+        custom=50.0,
+        fixed=800,
+    ),
+    "default-window-height": WindowSizeControlConfig(
+        title="Default Height",
+        default="100%",
+        custom=100.0,
+        fixed=600,
+    ),
 }
 
 
@@ -73,6 +110,79 @@ def _bool_action_node(key: str) -> KdlNode:
     if key == SCREENCAST_BLOCK_KEY:
         return KdlNode(SCREENCAST_BLOCK_KEY, args=["screencast"])
     return KdlNode(key, args=[True])
+
+
+def _legacy_size_arg_setting(value) -> tuple[str, float | int | None]:
+    if isinstance(value, str):
+        text = value.strip().rstrip(";")
+        if not text:
+            return ("default", None)
+        if text.endswith("%"):
+            try:
+                return ("proportion", round(float(text[:-1]) / 100.0, 5))
+            except ValueError:
+                return ("default", None)
+
+        parts = text.split()
+        if len(parts) == 2 and parts[0] in {"proportion", "fixed"}:
+            try:
+                number = float(parts[1])
+            except ValueError:
+                return ("default", None)
+            if parts[0] == "proportion":
+                return ("proportion", round(number, 5))
+            return ("fixed", int(number))
+
+        try:
+            value = float(text)
+        except ValueError:
+            return ("default", None)
+
+    if isinstance(value, bool) or value is None:
+        return ("default", None)
+    if isinstance(value, float) and 0 < value <= 1:
+        return ("proportion", round(value, 5))
+    if isinstance(value, (int, float)) and value > 0:
+        return ("fixed", int(value))
+    return ("default", None)
+
+
+def _window_size_setting(
+    rule: KdlNode | None, key: str
+) -> tuple[str, float | int | None]:
+    if rule is None:
+        return ("default", None)
+
+    node = rule.get_child(key)
+    if node is None:
+        return ("default", None)
+
+    proportion = node.get_child("proportion")
+    if proportion is not None and proportion.args:
+        return ("proportion", round(float(proportion.args[0]), 5))
+
+    fixed = node.get_child("fixed")
+    if fixed is not None and fixed.args:
+        return ("fixed", int(float(fixed.args[0])))
+
+    if node.args:
+        return _legacy_size_arg_setting(node.args[0])
+
+    return ("default", None)
+
+
+def _make_size_node(key: str, kind: str, value: float | int | None) -> KdlNode | None:
+    if kind == "default" or value is None:
+        return None
+    if kind not in {"proportion", "fixed"}:
+        raise ValueError(f"Unsupported window size kind: {kind}")
+
+    node = KdlNode(key)
+    if kind == "proportion":
+        node.children.append(KdlNode("proportion", args=[round(float(value), 5)]))
+    else:
+        node.children.append(KdlNode("fixed", args=[int(value)]))
+    return node
 
 
 def _rule_summary(rule: KdlNode) -> tuple[str, str]:
@@ -232,6 +342,111 @@ class WindowRulesPage(BasePage):
         t.connect("button-clicked", lambda *_: self._win._do_undo())
         self._win._toast_overlay.add_toast(t)
 
+    def _size_mode_index(self, kind: str, value: float | int | None) -> int:
+        if kind == "fixed":
+            return FIXED_SIZE_INDEX
+        if kind == "proportion" and value is not None:
+            for i, (_, preset) in enumerate(SIZE_PERCENT_PRESETS):
+                if abs(float(value) - preset) < 0.00001:
+                    return i
+            return CUSTOM_SIZE_INDEX
+        return CUSTOM_SIZE_INDEX
+
+    def _add_size_controls(
+        self, group: Adw.PreferencesGroup, rule: KdlNode | None, key: str
+    ) -> dict[str, Gtk.Widget]:
+        cfg = WINDOW_SIZE_CONTROLS[key]
+        kind, value = _window_size_setting(rule, key)
+        title = cfg.title
+
+        override_row = Adw.SwitchRow(
+            title=f"Override {title}",
+            subtitle=f"Off uses niri default ({cfg.default})",
+        )
+        override_row.set_active(kind != "default")
+        group.add(override_row)
+
+        mode_model = Gtk.StringList.new(SIZE_MODE_LABELS)
+        mode_row = Adw.ComboRow(title=title, model=mode_model)
+        selected = self._size_mode_index(kind, value)
+        if kind == "default":
+            selected = self._size_mode_index("proportion", cfg.custom / 100.0)
+        mode_row.set_selected(selected)
+        group.add(mode_row)
+
+        custom_value = cfg.custom
+        if kind == "proportion" and value is not None:
+            custom_value = round(float(value) * 100.0, 2)
+        custom_adj = Gtk.Adjustment(
+            value=custom_value,
+            lower=1.0,
+            upper=100.0,
+            step_increment=1.0,
+            page_increment=5.0,
+        )
+        custom_row = Adw.SpinRow(
+            title=f"Custom {title} (%)", adjustment=custom_adj, digits=2
+        )
+        group.add(custom_row)
+
+        fixed_value = cfg.fixed
+        if kind == "fixed" and value is not None:
+            fixed_value = int(value)
+        fixed_adj = Gtk.Adjustment(
+            value=fixed_value,
+            lower=1,
+            upper=7680,
+            step_increment=10,
+            page_increment=100,
+        )
+        fixed_row = Adw.SpinRow(
+            title=f"Fixed {title} (px)", adjustment=fixed_adj, digits=0
+        )
+        group.add(fixed_row)
+
+        def _update_visibility(*_):
+            enabled = override_row.get_active()
+            selected = mode_row.get_selected()
+            mode_row.set_visible(enabled)
+            custom_row.set_visible(enabled and selected == CUSTOM_SIZE_INDEX)
+            fixed_row.set_visible(enabled and selected == FIXED_SIZE_INDEX)
+
+        override_row.connect("notify::active", _update_visibility)
+        mode_row.connect("notify::selected", _update_visibility)
+        _update_visibility()
+
+        return {
+            "override": override_row,
+            "mode": mode_row,
+            "custom": custom_row,
+            "fixed": fixed_row,
+        }
+
+    def _size_node_from_controls(
+        self, key: str, controls: dict[str, Gtk.Widget]
+    ) -> KdlNode | None:
+        override_row = controls["override"]
+        if isinstance(override_row, Adw.SwitchRow) and not override_row.get_active():
+            return None
+
+        mode_row = controls["mode"]
+        selected = mode_row.get_selected() if isinstance(mode_row, Adw.ComboRow) else 0
+        if selected == FIXED_SIZE_INDEX:
+            fixed_row = controls["fixed"]
+            value = fixed_row.get_value() if isinstance(fixed_row, Adw.SpinRow) else 0
+            return _make_size_node(key, "fixed", int(value))
+        if selected == CUSTOM_SIZE_INDEX:
+            custom_row = controls["custom"]
+            value = (
+                custom_row.get_value() / 100.0
+                if isinstance(custom_row, Adw.SpinRow)
+                else 0
+            )
+            return _make_size_node(key, "proportion", value)
+
+        _, value = SIZE_PERCENT_PRESETS[selected]
+        return _make_size_node(key, "proportion", value)
+
     def _show_rule_dialog(self, rule: KdlNode | None, rule_idx: int):
         dialog = Adw.Dialog(title="Window Rule")
         dialog.set_content_width(520)
@@ -277,7 +492,12 @@ class WindowRulesPage(BasePage):
         prefs.add(match_grp)
 
         # ── Visibility & layout ───────────────────────────────────────────
-        layout_grp = Adw.PreferencesGroup(title="Layout &amp; Visibility")
+        layout_grp = Adw.PreferencesGroup(title="Layout & Visibility")
+
+        size_controls = {
+            key: self._add_size_controls(layout_grp, rule, key)
+            for key in WINDOW_SIZE_CONTROLS
+        }
 
         bool_rows: dict[str, Adw.SwitchRow] = {}
         for key, label in BOOL_ACTION_LABELS.items():
@@ -395,6 +615,12 @@ class WindowRulesPage(BasePage):
                     has_match = True
             if has_match:
                 new_rule.children.append(m)
+
+            # per-rule window sizing
+            for key, controls in size_controls.items():
+                cn = self._size_node_from_controls(key, controls)
+                if cn is not None:
+                    new_rule.children.append(cn)
 
             # bool actions
             for key, sr in bool_rows.items():
