@@ -681,24 +681,6 @@ class NiriModWindow(Adw.ApplicationWindow):
 
     def _check_kofi(self):
         from nirimod import app_settings
-        import os
-        import subprocess
-        from nirimod.updater import INSTALL_DIR
-        
-
-        current_hash = ""
-        try:
-            if os.path.isdir(os.path.join(INSTALL_DIR, ".git")):
-                current_hash = subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=INSTALL_DIR, text=True, stderr=subprocess.DEVNULL
-                ).strip()
-        except Exception:
-            pass
-            
-        last_hash = app_settings.get("kofi_last_hash", "")
-        if current_hash and current_hash != last_hash:
-            app_settings.set("kofi_last_hash", current_hash)
-            app_settings.set("kofi_dont_show", False)
 
         if app_settings.get("kofi_dont_show", False):
             return
