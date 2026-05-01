@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import pytest
+
 pytest.importorskip("gi")
 
 import unittest
@@ -49,6 +51,49 @@ class TestBuildTerminalCommand(unittest.TestCase):
         command = updater._build_terminal_command("ghostty '", "/tmp/update.sh")
 
         self.assertIsNone(command)
+
+
+class TestUpdateAvailability(unittest.TestCase):
+    def _run_git(self, repo: str, *args: str):
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _commit(self, repo: str, message: str) -> str:
+        self._run_git(repo, "commit", "--allow-empty", "-m", message)
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+        ).strip()
+
+    def _make_repo(self) -> str:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        repo = temp_dir.name
+        self._run_git(repo, "init")
+        self._run_git(repo, "config", "user.email", "test@example.com")
+        self._run_git(repo, "config", "user.name", "Test User")
+        return repo
+
+    def test_branch_ahead_of_remote_main_is_not_update(self):
+        repo = self._make_repo()
+        remote_hash = self._commit(repo, "remote main")
+        local_hash = self._commit(repo, "local branch")
+
+        self.assertFalse(updater._update_available(local_hash, remote_hash, repo))
+
+    def test_dirty_worktree_still_gets_remote_update(self):
+        repo = self._make_repo()
+        local_hash = self._commit(repo, "installed version")
+        remote_hash = self._commit(repo, "remote main")
+        self._run_git(repo, "checkout", "--detach", local_hash)
+        with open(os.path.join(repo, "local-change.txt"), "w") as fh:
+            fh.write("local edit\n")
+
+        self.assertTrue(updater._update_available(local_hash, remote_hash, repo))
 
 
 class TestLaunchUpdaterInTerminal(unittest.TestCase):

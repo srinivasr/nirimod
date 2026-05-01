@@ -28,8 +28,8 @@ def check_for_updates(callback):
     def _do_check():
         try:
             from gi.repository import GLib
-            if not os.path.isdir(os.path.join(INSTALL_DIR, ".git")):
 
+            if not os.path.isdir(os.path.join(INSTALL_DIR, ".git")):
                 GLib.idle_add(callback, None, None)
                 return
 
@@ -49,7 +49,7 @@ def check_for_updates(callback):
                     "message", "New update available"
                 )
 
-            if remote_hash and remote_hash != local_hash:
+            if _update_available(local_hash, remote_hash, INSTALL_DIR):
                 GLib.idle_add(callback, remote_hash, commit_msg)
             else:
                 GLib.idle_add(callback, None, None)
@@ -59,6 +59,27 @@ def check_for_updates(callback):
             GLib.idle_add(callback, None, None)
 
     threading.Thread(target=_do_check, daemon=True).start()
+
+
+def _commit_is_ancestor(commit_hash: str, install_dir: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit_hash, "HEAD"],
+        cwd=install_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _update_available(
+    local_hash: str, remote_hash: str | None, install_dir: str = INSTALL_DIR
+) -> bool:
+    if not remote_hash or remote_hash == local_hash:
+        return False
+    if _commit_is_ancestor(remote_hash, install_dir):
+        return False
+    return True
 
 
 def _terminal_candidates():
