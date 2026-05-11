@@ -2,12 +2,18 @@
 set -euo pipefail
 
 # Constants & Paths
-VERSION="1.0.0"
+INSTALLER_VERSION="1.0.0"
 INSTALL_DIR="$HOME/.local/share/nirimod"
 BIN_DIR="$HOME/.local/bin"
 DESKTOP_FILE_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/scalable/apps"
 REPO_URL="https://github.com/srinivasr/nirimod"
+
+DISTRO=""
+DISTRO_PRETTY=""
+DISTRO_LIKE=""
+PM=""
+IMAGE_BUILT_OS=0
 
 # Colors
 RED='\033[0;31m'
@@ -42,7 +48,7 @@ ask() {
 
 print_banner() {
   clear
-  echo -e "${BLUE}${BOLD}NiriMod Installer v${VERSION}${NC}"
+  echo -e "${BLUE}${BOLD}NiriMod Installer v${INSTALLER_VERSION}${NC}"
   echo -e "${CYAN}GUI Configuration Manager for the Niri Wayland Compositor${NC}\n"
 }
 
@@ -50,7 +56,9 @@ print_banner() {
 detect_distro() {
   DISTRO=""
   DISTRO_PRETTY=""
+  DISTRO_LIKE=""
   PM=""   # detected package manager
+  IMAGE_BUILT_OS=0
 
   if [ -f /etc/os-release ]; then
     # shellcheck source=/dev/null
@@ -59,6 +67,8 @@ detect_distro() {
     DISTRO_PRETTY="${PRETTY_NAME:-$ID}"
     DISTRO_LIKE="${ID_LIKE:-}"
   fi
+
+  detect_image_built_os
 
   # Normalize distro id using ID_LIKE fallback
   case "$DISTRO" in
@@ -83,8 +93,10 @@ detect_distro() {
       ;;
   esac
 
-  # Verify the detected package manager actually exists
-  if [ -n "$PM" ] && ! command -v "$PM" &>/dev/null; then
+  # Verify the detected package manager actually exists. On image-built Fedora,
+  # keep the Fedora package family even if dnf is absent; dependency checks use rpm
+  # and missing packages are reported without attempting a dnf install.
+  if [ -n "$PM" ] && [ "$IMAGE_BUILT_OS" -ne 1 ] && ! command -v "$PM" &>/dev/null; then
     PM=""
   fi
 
@@ -106,6 +118,9 @@ detect_distro() {
   fi
 
   info "Detected: ${DISTRO_PRETTY} (package manager: ${PM})"
+  if [ "$IMAGE_BUILT_OS" -eq 1 ]; then
+    info "Detected image-built/atomic OS; system dependencies must come from the image."
+  fi
 }
 
 # Package Installation
@@ -166,6 +181,47 @@ pkg_installed() {
 }
 
 cmd_exists() { command -v "$1" &>/dev/null; }
+
+detect_image_built_os() {
+  IMAGE_BUILT_OS=0
+  if [ -e /run/ostree-booted ]; then
+    IMAGE_BUILT_OS=1
+  fi
+}
+
+needs_uv_preload_cleanup() {
+  [[ "${LD_PRELOAD:-}" == *"libhardened_malloc.so"* ]] || [[ "${LD_PRELOAD:-}" == *"libno_rlimit_as.so"* ]]
+}
+
+filtered_ld_preload() {
+  local entry
+  local kept=()
+  for entry in ${LD_PRELOAD//:/ }; do
+    case "$entry" in
+      *libhardened_malloc.so*|*libno_rlimit_as.so*) ;;
+      *) kept+=("$entry") ;;
+    esac
+  done
+  printf '%s' "${kept[*]}"
+}
+
+run_with_filtered_preload() {
+  if needs_uv_preload_cleanup; then
+    local preload
+    preload="$(filtered_ld_preload)"
+    if [ -n "$preload" ]; then
+      LD_PRELOAD="$preload" "$@"
+    else
+      env -u LD_PRELOAD "$@"
+    fi
+    return
+  fi
+  "$@"
+}
+
+run_uv() {
+  run_with_filtered_preload uv "$@"
+}
 
 resolve_deps() {
   MISSING=()
@@ -278,6 +334,7 @@ resolve_deps() {
 # Full Dependency Check
 check_dependencies() {
   step "Checking System Dependencies"
+  detect_image_built_os
   
   if [ "${SKIP_DEPS:-0}" -eq 1 ]; then
     warn "Skipping system package manager checks (--skip-deps)."
@@ -292,6 +349,12 @@ check_dependencies() {
         echo -e "    ${RED}•${NC} $pkg"
       done
       echo ""
+      if [ "${IMAGE_BUILT_OS:-0}" -eq 1 ]; then
+        error "This looks like an image-built/atomic system, so the installer will not run sudo ${PM} install."
+        error "Add the missing packages to your image recipe or base image, rebuild, then re-run this installer."
+        warn "If these dependencies are provided outside the system package database, re-run with --skip-deps."
+        exit 1
+      fi
       if ask "Install missing packages via sudo?"; then
         install_pkgs "${MISSING[@]}"
         success "System packages installed."
@@ -327,7 +390,7 @@ check_dependencies() {
     warn "'uv' is not installed. It is required to manage NiriMod's Python environment."
     if ask "Install 'uv' via the official installer (astral.sh)?"; then
       info "Downloading and running the uv installer..."
-      curl -LsSf https://astral.sh/uv/install.sh | sh
+      run_with_filtered_preload bash -c 'set -euo pipefail; curl -LsSf https://astral.sh/uv/install.sh | sh'
       # Make cargo/uv available in current session
       export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
       if [ -f "$HOME/.cargo/env" ]; then
@@ -339,13 +402,13 @@ check_dependencies() {
         error "Or run:  export PATH=\"\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH\""
         exit 1
       fi
-      success "'uv' installed successfully: $(uv --version)"
+      success "'uv' installed successfully: $(run_uv --version)"
     else
       error "Cannot proceed without 'uv'."
       exit 1
     fi
   else
-    success "'uv' is available: $(uv --version)"
+    success "'uv' is available: $(run_uv --version)"
   fi
 }
 
@@ -371,11 +434,11 @@ install_app() {
 
   info "Creating virtual environment with system site-packages..."
   rm -rf .venv # Ensure clean state
-  uv venv --system-site-packages --python python3
-  uv sync --no-dev
+  run_uv venv --system-site-packages --python python3
+  run_uv sync --no-dev
   
   # Verification check
-  if ! uv run python -c "import gi" &>/dev/null; then
+  if ! run_uv run python -c "import gi" &>/dev/null; then
     warn "Virtual environment installed, but 'gi' (PyGObject) is still not found."
     warn "This typically happens if the system bindings are missing or Python version mismatch exists."
     
@@ -392,8 +455,8 @@ install_app() {
       warn "PyGObject is available on host but NOT in the venv. This is unexpected."
       warn "Attempting a fallback venv creation..."
       rm -rf .venv
-      uv venv --system-site-packages
-      uv sync --no-dev
+      run_uv venv --system-site-packages
+      run_uv sync --no-dev
     fi
   fi
   success "Python environment ready and verified."
@@ -414,7 +477,10 @@ fi
 export PATH="\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH"
 export PYTHONPATH="\$INSTALL_DIR"
 cd "\$INSTALL_DIR"
-exec uv run python3 -m nirimod "\$@"
+$(declare -f needs_uv_preload_cleanup)
+$(declare -f filtered_ld_preload)
+$(declare -f run_with_filtered_preload)
+run_with_filtered_preload uv run python3 -m nirimod "\$@"
 EOF
   chmod +x "$BIN_DIR/nirimod"
   success "Launcher created: $BIN_DIR/nirimod"
@@ -479,7 +545,7 @@ EOF
   fi
 
   echo ""
-  success "${BOLD}NiriMod ${VERSION} installed successfully!${NC}"
+  success "${BOLD}NiriMod ${INSTALLER_VERSION} installed successfully!${NC}"
   info "Launch from your app menu, or run: ${CYAN}~/.local/bin/nirimod${NC}"
 }
 
