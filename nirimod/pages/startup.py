@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 
-import shlex
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -12,6 +11,7 @@ from gi.repository import Adw, Gtk, GLib
 
 from nirimod.kdl_parser import KdlNode
 from nirimod.pages.base import BasePage
+from nirimod.startup_entries import make_startup_node, startup_values_from_node
 
 
 class StartupPage(BasePage):
@@ -84,13 +84,18 @@ class StartupPage(BasePage):
             self._content.append(add_btn)
 
     def _make_row(self, node: KdlNode, idx: int) -> Adw.ActionRow:
-        cmd = " ".join(str(a) for a in node.args)
-        is_sh = "sh" in node.name
+        cmd, is_sh, delay = startup_values_from_node(node)
         cmd_str = GLib.markup_escape_text(cmd) if cmd else "(empty)"
+        subtitle_parts = []
+        if delay > 0:
+            subtitle_parts.append(f"Delay: {delay}s")
+        subtitle_parts.append(
+            "Via shell (spawn-sh-at-startup)" if is_sh else "Launched directly"
+        )
 
         row = Adw.ActionRow(
             title=cmd_str or "(empty)",
-            subtitle="Via shell (spawn-sh-at-startup)" if is_sh else "Launched directly",
+            subtitle=" | ".join(subtitle_parts),
         )
         row.set_activatable(True)
         row.connect("activated", lambda *_, i=idx: self._on_edit(i))
@@ -125,13 +130,25 @@ class StartupPage(BasePage):
         )
         cmd_entry = Adw.EntryRow(title="Command")
         sh_switch = Adw.SwitchRow(title="Use shell (spawn-sh-at-startup)")
+        delay_adj = Gtk.Adjustment(
+            value=0, lower=0, upper=3600, step_increment=1, page_increment=10
+        )
+        delay_row = Adw.SpinRow(
+            title="Delay",
+            subtitle="Seconds to wait before launching",
+            adjustment=delay_adj,
+            digits=0,
+        )
         if node:
-            cmd_entry.set_text(" ".join(str(a) for a in node.args))
-            sh_switch.set_active("sh" in node.name)
+            command, is_sh, delay = startup_values_from_node(node)
+            cmd_entry.set_text(command)
+            sh_switch.set_active(is_sh)
+            delay_row.set_value(delay)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         grp = Adw.PreferencesGroup()
         grp.add(cmd_entry)
+        grp.add(delay_row)
         grp.add(sh_switch)
         box.append(grp)
         dialog.set_extra_child(box)
@@ -147,17 +164,8 @@ class StartupPage(BasePage):
             if not cmd:
                 return
             is_sh = sh_switch.get_active()
-            node_name = "spawn-sh-at-startup" if is_sh else "spawn-at-startup"
-            if is_sh:
-                # sh -c expects a single string; store the whole command as one arg
-                args = [cmd]
-            else:
-                try:
-                    args = shlex.split(cmd)
-                except ValueError:
-                    args = cmd.split()
-
-            new_node = KdlNode(node_name, args=args)
+            delay = int(delay_row.get_value())
+            new_node = make_startup_node(cmd, is_sh, delay)
             entries = self._get_entries()
             if idx >= 0 and 0 <= idx < len(entries):
                 i = self._nodes.index(entries[idx])
