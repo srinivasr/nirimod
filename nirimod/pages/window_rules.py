@@ -10,6 +10,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk, GLib
 
+from nirimod.column_display import (
+    COLUMN_DISPLAY_RULE_LABELS,
+    column_display_rule_index,
+    column_display_rule_value,
+    normalize_column_display,
+)
 from nirimod.kdl_parser import KdlNode, KdlRawString
 from nirimod.pages.base import BasePage
 
@@ -163,6 +169,27 @@ def _floating_position_location_index(x: int, y: int, relative_to: str) -> int:
     return CUSTOM_FLOATING_POSITION_INDEX
 
 
+def _column_display_setting(rule: KdlNode | None) -> str | None:
+    if rule is None:
+        return None
+
+    node = rule.get_child("default-column-display")
+    if node is None or not node.args:
+        return None
+
+    return normalize_column_display(node.args[0])
+
+
+def _make_column_display_node(index: int) -> KdlNode | None:
+    value = column_display_rule_value(index)
+    if value is None:
+        return None
+    return KdlNode(
+        "default-column-display",
+        args=[value],
+    )
+
+
 def _legacy_size_arg_setting(value) -> tuple[str, float | int | None]:
     if isinstance(value, str):
         text = value.strip().rstrip(";")
@@ -266,6 +293,8 @@ def _rule_summary(rule: KdlNode) -> tuple[str, str]:
             badges.append("fullscreen")
         elif c.name in ("clip-to-geometry", "geometry-corner-radius"):
             pass  # skip noisy ones
+        elif c.name == "default-column-display" and c.args:
+            badges.append(f"column display {c.args[0]}")
         else:
             badges.append(c.name.replace("-", " "))
 
@@ -650,6 +679,17 @@ class WindowRulesPage(BasePage):
             for key in WINDOW_SIZE_CONTROLS
         }
 
+        column_display_model = Gtk.StringList.new(COLUMN_DISPLAY_RULE_LABELS)
+        column_display_row = Adw.ComboRow(
+            title="Default Column Display",
+            subtitle="Columns created from matching windows",
+            model=column_display_model,
+        )
+        column_display_row.set_selected(
+            column_display_rule_index(_column_display_setting(rule))
+        )
+        layout_grp.add(column_display_row)
+
         bool_rows: dict[str, Adw.SwitchRow] = {}
         for key, label in BOOL_ACTION_LABELS.items():
             sr = Adw.SwitchRow(title=label)
@@ -776,6 +816,12 @@ class WindowRulesPage(BasePage):
                 cn = self._size_node_from_controls(key, controls)
                 if cn is not None:
                     new_rule.children.append(cn)
+
+            column_display_node = _make_column_display_node(
+                column_display_row.get_selected()
+            )
+            if column_display_node is not None:
+                new_rule.children.append(column_display_node)
 
             # floating position
             position_node = self._floating_position_node_from_controls(

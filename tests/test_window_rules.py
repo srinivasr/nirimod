@@ -7,6 +7,10 @@ import pytest
 
 pytest.importorskip("gi")
 
+from nirimod.column_display import (
+    COLUMN_DISPLAY_RULE_LABELS,
+    column_display_rule_index,
+)
 from nirimod.kdl_parser import KdlNode, write_kdl
 from nirimod.pages.window_rules import (
     CUSTOM_FLOATING_POSITION_INDEX,
@@ -17,10 +21,13 @@ from nirimod.pages.window_rules import (
     SIZE_PERCENT_PRESETS,
     _bool_action_active,
     _bool_action_node,
+    _column_display_setting,
     _floating_position_location_index,
     _floating_position_setting,
+    _make_column_display_node,
     _make_floating_position_node,
     _make_size_node,
+    _rule_summary,
     _window_size_setting,
 )
 
@@ -103,6 +110,42 @@ class TestWindowRuleActions(unittest.TestCase):
                 False, 0, 0, DEFAULT_FLOATING_POSITION_RELATIVE_TO
             )
         )
+
+    def test_column_display_default_writes_no_override(self):
+        self.assertIsNone(_make_column_display_node(0))
+        self.assertIsNone(_make_column_display_node(99))
+
+    def test_column_display_reads_tabbed_rule(self):
+        rule = KdlNode(
+            "window-rule",
+            children=[KdlNode("default-column-display", args=["tabbed"])],
+        )
+
+        self.assertEqual(_column_display_setting(rule), "tabbed")
+        self.assertEqual(
+            column_display_rule_index(_column_display_setting(rule)),
+            COLUMN_DISPLAY_RULE_LABELS.index("Tabbed"),
+        )
+
+    def test_column_display_writes_valid_niri_syntax(self):
+        node = _make_column_display_node(COLUMN_DISPLAY_RULE_LABELS.index("Tabbed"))
+        out = write_kdl([KdlNode("window-rule", children=[node])])
+
+        self.assertIn('default-column-display "tabbed"', out)
+        self.assertNotIn("default-column-display tabbed", out)
+
+    def test_rule_summary_shows_column_display_value(self):
+        rule = KdlNode(
+            "window-rule",
+            children=[
+                KdlNode("match", props={"app-id": "org.example.App"}),
+                KdlNode("default-column-display", args=["tabbed"]),
+            ],
+        )
+
+        _, subtitle = _rule_summary(rule)
+
+        self.assertIn("column display tabbed", subtitle)
 
     def test_floating_position_locations_are_edges_plus_custom(self):
         self.assertEqual(

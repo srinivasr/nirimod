@@ -10,6 +10,11 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk
 
 from nirimod.kdl_parser import KdlNode, find_or_create, set_child_arg, remove_child
+from nirimod.column_display import (
+    COLUMN_DISPLAY_LABELS,
+    column_display_index,
+    column_display_value,
+)
 from nirimod.pages.base import BasePage
 
 
@@ -57,6 +62,23 @@ class LayoutPage(BasePage):
             ),
         )
         basic_grp.add(cfc_row)
+
+        display_model = Gtk.StringList.new(COLUMN_DISPLAY_LABELS)
+        display_row = Adw.ComboRow(
+            title="Default Column Display",
+            subtitle="How new columns open",
+            model=display_model,
+        )
+        display_row.set_selected(
+            column_display_index(layout.child_arg("default-column-display"))
+        )
+        display_row.connect(
+            "notify::selected",
+            lambda r, _: self._set_layout(
+                "default-column-display", column_display_value(r.get_selected())
+            ),
+        )
+        basic_grp.add(display_row)
 
         prefer_csd_row = Adw.SwitchRow(
             title="Prefer No CSD", subtitle="Ask apps to omit client-side decorations"
