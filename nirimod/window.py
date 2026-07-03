@@ -571,6 +571,9 @@ class NiriModWindow(Adw.ApplicationWindow):
         def _finish_save(reload_result):
             reload_ok, reload_msg = reload_result
             self.app_state.commit_save(new_kdl)
+            out = self._pages.get("outputs")
+            if out and hasattr(out, "refresh"):
+                out.refresh()
             raw = self._pages.get("raw_config")
             if raw and hasattr(raw, "refresh"):
                 raw.refresh()

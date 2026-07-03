@@ -88,9 +88,71 @@ class OutputsPage(BasePage):
         self.refresh()
         return tb
 
+    def _supply_offline_outputs(self):
+        for o in self._outputs:
+            if o.get("logical") is not None:
+                continue
+            name = o.get("name")
+            if not name:
+                continue
+            out_node = next(
+                (n for n in self._nodes if n.name == "output" and n.args and n.args[0] == name),
+                None,
+            )
+            if out_node is None:
+                continue
+
+            mode_str = out_node.child_arg("mode")
+            scale_val = out_node.child_arg("scale")
+            t_val = out_node.child_arg("transform")
+            pos_node = out_node.get_child("position")
+
+            modes = o.get("modes", [])
+            mode_idx = None
+            if mode_str and modes:
+                try:
+                    w_str = mode_str.split("@")[0].split("x")[0]
+                    h_str = mode_str.split("@")[0].split("x")[1]
+                    w = int(w_str)
+                    h = int(h_str)
+                    for i, m in enumerate(modes):
+                        if m.get("width") == w and m.get("height") == h:
+                            mode_idx = i
+                            break
+                except (ValueError, IndexError):
+                    pass
+
+            if mode_idx is not None:
+                o["current_mode"] = mode_idx
+
+            m = modes[mode_idx] if isinstance(mode_idx, int) and 0 <= mode_idx < len(modes) else {}
+            pw = m.get("width", 1920)
+            ph = m.get("height", 1080)
+
+            scale = float(scale_val) if scale_val is not None else 1.0
+            t = str(t_val).lower().replace("_", "-") if t_val else "normal"
+            if t in ["90", "270", "flipped-90", "flipped-270"]:
+                pw, ph = ph, pw
+
+            px = 0
+            py = 0
+            if pos_node:
+                px = pos_node.props.get("x", 0)
+                py = pos_node.props.get("y", 0)
+
+            o["logical"] = {
+                "x": px,
+                "y": py,
+                "width": round(pw / scale),
+                "height": round(ph / scale),
+                "scale": scale,
+                "transform": t,
+            }
+
     def refresh(self):
         def _on_got_outputs(outputs):
             self._outputs = outputs
+            self._supply_offline_outputs()
             names = [o.get("name", "?") for o in self._outputs]
             model = Gtk.StringList.new(names)
             self._out_combo.set_model(model)
@@ -152,7 +214,7 @@ class OutputsPage(BasePage):
         min_x = min_y = float("inf")
         max_x = max_y = float("-inf")
         for o in self._outputs:
-            pos = o.get("logical", {})
+            pos = o.get("logical") or {}
             lx = pos.get("x", 0)
             ly = pos.get("y", 0)
             lw = pos.get("width", 1920)
@@ -196,7 +258,7 @@ class OutputsPage(BasePage):
         cr.stroke()
 
         for i, o in enumerate(self._outputs):
-            pos = o.get("logical", {})
+            pos = o.get("logical") or {}
             x = off_x + pos.get("x", 0) * scale
             y = off_y + pos.get("y", 0) * scale
             w = pos.get("width", 1920) * scale
@@ -229,7 +291,7 @@ class OutputsPage(BasePage):
                 if isinstance(mode_idx, int) and 0 <= mode_idx < len(modes)
                 else {}
             )
-            out_scale = o.get("logical", {}).get("scale", 1.0)
+            out_scale = (o.get("logical") or {}).get("scale", 1.0)
             res = f"{mode.get('width', '?')}×{mode.get('height', '?')}"
             scale_text = f"Scale: {out_scale}x"
 
@@ -264,7 +326,7 @@ class OutputsPage(BasePage):
         scale = self._canvas_scale
         ox, oy = self._canvas_offset
         for o in reversed(self._outputs):
-            pos = o.get("logical", {})
+            pos = o.get("logical") or {}
             x = ox + pos.get("x", 0) * scale
             y = oy + pos.get("y", 0) * scale
             w = pos.get("width", 1920) * scale
@@ -301,7 +363,7 @@ class OutputsPage(BasePage):
         if not drag_o:
             return
 
-        monitor_scale = drag_o.get("logical", {}).get("scale", 1.0)
+        monitor_scale = (drag_o.get("logical") or {}).get("scale", 1.0)
         mode_idx = drag_o.get("current_mode")
         modes = drag_o.get("modes", [])
         mode = (
@@ -312,7 +374,7 @@ class OutputsPage(BasePage):
         pixel_w = mode.get("width", 1920)
         pixel_h = mode.get("height", 1080)
 
-        transform = str(drag_o.get("logical", {}).get("transform", "normal")).lower().replace("_", "-")
+        transform = str((drag_o.get("logical") or {}).get("transform", "normal")).lower().replace("_", "-")
         if transform in ["90", "270", "flipped-90", "flipped-270"]:
             pixel_w, pixel_h = pixel_h, pixel_w
 
@@ -335,7 +397,7 @@ class OutputsPage(BasePage):
             if other.get("name") == self._drag_output:
                 continue
 
-            other_pos = other.get("logical", {})
+            other_pos = other.get("logical") or {}
             other_x = other_pos.get("x", 0)
             other_y = other_pos.get("y", 0)
 
@@ -377,7 +439,7 @@ class OutputsPage(BasePage):
         if closest_y <= SNAP_THRESHOLD:
             new_ly = snapped_y
 
-        if "logical" not in drag_o:
+        if not drag_o.get("logical"):
             drag_o["logical"] = {}
         drag_o["logical"]["x"] = new_lx
         drag_o["logical"]["y"] = new_ly
@@ -394,7 +456,7 @@ class OutputsPage(BasePage):
                 self._apply_position(o["name"])
 
             if self._current_out:
-                cur_pos = self._current_out.get("logical", {})
+                cur_pos = self._current_out.get("logical") or {}
                 if hasattr(self, "_pos_x_adj"):
                     self._pos_x_adj.set_value(cur_pos.get("x", 0))
                 if hasattr(self, "_pos_y_adj"):
@@ -410,7 +472,7 @@ class OutputsPage(BasePage):
         ox, oy = self._canvas_offset
         
         for i, o in reversed(list(enumerate(self._outputs))):
-            pos = o.get("logical", {})
+            pos = o.get("logical") or {}
             mx = ox + pos.get("x", 0) * scale
             my = oy + pos.get("y", 0) * scale
             mw = pos.get("width", 1920) * scale
@@ -424,7 +486,7 @@ class OutputsPage(BasePage):
         o = next((x for x in self._outputs if x["name"] == name), None)
         if not o:
             return
-        pos = o.get("logical", {})
+        pos = o.get("logical") or {}
 
         nx = pos.get("x", 0)
         ny = pos.get("y", 0)
@@ -487,7 +549,7 @@ class OutputsPage(BasePage):
             lambda r, _: self._on_mode_changed(name, modes, r.get_selected()),
         )
 
-        scale_val = round(output.get("logical", {}).get("scale", 1.0), 3)
+        scale_val = round((output.get("logical") or {}).get("scale", 1.0), 3)
         scale_adj = Gtk.Adjustment(
             value=scale_val,
             lower=0.01,
@@ -502,7 +564,7 @@ class OutputsPage(BasePage):
 
         t_model = Gtk.StringList.new(TRANSFORMS)
         transform_row = Adw.ComboRow(title="Transform", model=t_model)
-        cur_t = output.get("logical", {}).get("transform", "normal")
+        cur_t = (output.get("logical") or {}).get("transform", "normal")
         cur_t_norm = str(cur_t).lower().replace("_", "-") if cur_t else "normal"
         if cur_t_norm in TRANSFORMS:
             transform_row.set_selected(TRANSFORMS.index(cur_t_norm))
@@ -513,8 +575,8 @@ class OutputsPage(BasePage):
             ),
         )
 
-        px = output.get("logical", {}).get("x", 0)
-        py = output.get("logical", {}).get("y", 0)
+        px = (output.get("logical") or {}).get("x", 0)
+        py = (output.get("logical") or {}).get("y", 0)
         px_adj = Gtk.Adjustment(value=px, lower=-1000000, upper=1000000, step_increment=1)
         py_adj = Gtk.Adjustment(value=py, lower=-1000000, upper=1000000, step_increment=1)
         self._pos_x_adj = px_adj
@@ -619,9 +681,9 @@ class OutputsPage(BasePage):
                     mode_str = f"{m.get('width', 0)}x{m.get('height', 0)}@{m.get('refresh_rate', 0) / 1000:.3f}"
                     set_child_arg(out_node, "mode", mode_str)
             if out_node.get_child("scale") is None:
-                set_child_arg(out_node, "scale", o.get("logical", {}).get("scale", 1.0))
+                set_child_arg(out_node, "scale", (o.get("logical") or {}).get("scale", 1.0))
             if out_node.get_child("transform") is None:
-                t = o.get("logical", {}).get("transform", "normal")
+                t = (o.get("logical") or {}).get("transform", "normal")
                 t = str(t).lower().replace("_", "-") if t else "normal"
                 if t not in TRANSFORMS:
                     t = "normal"
@@ -630,8 +692,8 @@ class OutputsPage(BasePage):
             if pos_node is None:
                 pos_node = KdlNode(name="position")
                 out_node.children.append(pos_node)
-                pos_node.props["x"] = o.get("logical", {}).get("x", 0)
-                pos_node.props["y"] = o.get("logical", {}).get("y", 0)
+                pos_node.props["x"] = (o.get("logical") or {}).get("x", 0)
+                pos_node.props["y"] = (o.get("logical") or {}).get("y", 0)
 
     def _get_or_create_out_node(self, name: str) -> KdlNode:
         nodes = self._nodes
@@ -655,7 +717,7 @@ class OutputsPage(BasePage):
         return out_node
 
     def _update_logical_dims(self, o: dict):
-        if "logical" not in o:
+        if not o.get("logical"):
             o["logical"] = {}
         mode_idx = o.get("current_mode")
         modes = o.get("modes", [])
@@ -705,7 +767,7 @@ class OutputsPage(BasePage):
 
         o = next((x for x in self._outputs if x.get("name") == name), None)
         if o:
-            if "logical" not in o:
+            if not o.get("logical"):
                 o["logical"] = {}
             if prop == "scale":
                 o["logical"]["scale"] = value
@@ -729,7 +791,7 @@ class OutputsPage(BasePage):
 
         o = next((out for out in self._outputs if out.get("name") == name), None)
         if o:
-            if "logical" not in o:
+            if not o.get("logical"):
                 o["logical"] = {}
             o["logical"]["x"] = x
             o["logical"]["y"] = y
@@ -743,4 +805,8 @@ class OutputsPage(BasePage):
 
         out_node = self._get_or_create_out_node(name)
         set_node_flag(out_node, flag, enabled)
+        if flag == "off" and not enabled:
+            self._supply_offline_outputs()
         self._commit(f"output {flag}")
+        if self._canvas:
+            self._canvas.queue_draw()
