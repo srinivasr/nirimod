@@ -377,41 +377,52 @@ class OutputsPage(BasePage):
             other_top    = other_y
             other_bottom = other_y + other_logical_h
 
-            for dragged_edge, is_left_edge in [
-                (dragged_left, True),
-                (dragged_right, False),
-            ]:
-                for other_edge, is_other_left_edge in [
-                    (other_left, True),
-                    (other_right, False),
-                ]:
-                    dist = abs(dragged_edge - other_edge)
-                    if dist < closest_x:
-                        closest_x = dist
-                        snapped_x = _snap_axis_origin(
-                            other_edge,
-                            logical_w,
-                            is_left_edge,
-                            is_other_left_edge,
-                        )
+            vertical_spans_are_near = not (
+                dragged_bottom < other_top - SNAP_THRESHOLD
+                or other_bottom + SNAP_THRESHOLD < dragged_top
+            )
+            horizontal_spans_are_near = not (
+                dragged_right < other_left - SNAP_THRESHOLD
+                or other_right + SNAP_THRESHOLD < dragged_left
+            )
 
-            for dragged_edge, is_top_edge in [
-                (dragged_top, True),
-                (dragged_bottom, False),
-            ]:
-                for other_edge, is_other_top_edge in [
-                    (other_top, True),
-                    (other_bottom, False),
+            if vertical_spans_are_near:
+                for dragged_edge, is_left_edge in [
+                    (dragged_left, True),
+                    (dragged_right, False),
                 ]:
-                    dist = abs(dragged_edge - other_edge)
-                    if dist < closest_y:
-                        closest_y = dist
-                        snapped_y = _snap_axis_origin(
-                            other_edge,
-                            logical_h,
-                            is_top_edge,
-                            is_other_top_edge,
-                        )
+                    for other_edge, is_other_left_edge in [
+                        (other_left, True),
+                        (other_right, False),
+                    ]:
+                        dist = abs(dragged_edge - other_edge)
+                        if dist < closest_x:
+                            closest_x = dist
+                            snapped_x = _snap_axis_origin(
+                                other_edge,
+                                logical_w,
+                                is_left_edge,
+                                is_other_left_edge,
+                            )
+
+            if horizontal_spans_are_near:
+                for dragged_edge, is_top_edge in [
+                    (dragged_top, True),
+                    (dragged_bottom, False),
+                ]:
+                    for other_edge, is_other_top_edge in [
+                        (other_top, True),
+                        (other_bottom, False),
+                    ]:
+                        dist = abs(dragged_edge - other_edge)
+                        if dist < closest_y:
+                            closest_y = dist
+                            snapped_y = _snap_axis_origin(
+                                other_edge,
+                                logical_h,
+                                is_top_edge,
+                                is_other_top_edge,
+                            )
 
         if closest_x <= SNAP_THRESHOLD:
             new_lx = snapped_x
