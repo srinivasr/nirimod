@@ -5,6 +5,10 @@ from __future__ import annotations
 import math
 import unittest
 
+import pytest
+
+pytest.importorskip("gi")
+
 from nirimod.pages.outputs import OutputsPage
 
 
