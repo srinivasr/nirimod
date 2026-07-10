@@ -8,6 +8,7 @@ find/replace rather than a full AST round-trip.
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -494,9 +495,15 @@ def _atomic_write(path: Path, content: str) -> None:
     if target.exists() and target.read_text() == content:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target_mode = stat.S_IMODE(target.stat().st_mode)
+    except FileNotFoundError:
+        target_mode = None
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".nirimod_tmp_")
     try:
         os.write(fd, content.encode())
+        if target_mode is not None:
+            os.fchmod(fd, target_mode)
         os.close(fd)
         fd = -1
         os.replace(tmp, target)

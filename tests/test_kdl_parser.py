@@ -6,6 +6,7 @@ all config changes in NiriMod.
 
 from __future__ import annotations
 
+import stat
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -227,19 +228,32 @@ class TestConfigWrites(unittest.TestCase):
     def test_save_updates_regular_file(self):
         config = self.active_dir / "config.kdl"
         config.write_text("gaps 4\n")
+        config.chmod(0o640)
 
         save_niri_config(parse_kdl("gaps 8\n"), path=config)
 
         self.assertFalse(config.is_symlink())
         self.assertEqual(config.read_text(), "gaps 8\n")
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o640)
+
+    def test_save_preserves_special_mode_bits(self):
+        config = self.active_dir / "config.kdl"
+        config.write_text("gaps 4\n")
+        config.chmod(0o6750)
+
+        save_niri_config(parse_kdl("gaps 8\n"), path=config)
+
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o6750)
 
     def test_save_preserves_symlink_and_updates_target(self):
         link, target = self._link("config.kdl", "gaps 4\n")
+        target.chmod(0o640)
 
         save_niri_config(parse_kdl("gaps 8\n"), path=link)
 
         self.assertTrue(link.is_symlink())
         self.assertEqual(target.read_text(), "gaps 8\n")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
 
     def test_save_preserves_broken_symlink_and_creates_target(self):
         link, target = self._link("config.kdl")
@@ -248,9 +262,11 @@ class TestConfigWrites(unittest.TestCase):
 
         self.assertTrue(link.is_symlink())
         self.assertEqual(target.read_text(), "gaps 8\n")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
 
     def test_validated_replacement_preserves_symlink(self):
         link, target = self._link("config.kdl", "gaps 4\n")
+        target.chmod(0o640)
         validated = self.active_dir / ".config.kdl.tmp"
         validated.write_text("gaps 8\n")
 
@@ -259,6 +275,7 @@ class TestConfigWrites(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertFalse(validated.exists())
         self.assertEqual(target.read_text(), "gaps 8\n")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
 
     def test_multi_file_save_preserves_primary_and_include_symlinks(self):
         config_link, config_target = self._link(
