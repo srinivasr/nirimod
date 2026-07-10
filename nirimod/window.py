@@ -613,7 +613,7 @@ class NiriModWindow(Adw.ApplicationWindow):
                     self.show_toast(f"Validation error: {msg}", timeout=8)
                     tmp_kdl.unlink(missing_ok=True)
                     return
-                shutil.move(tmp_kdl, kdl_parser.NIRI_CONFIG)
+                kdl_parser.replace_config_file(tmp_kdl, kdl_parser.NIRI_CONFIG)
                 niri_ipc.run_in_thread(niri_ipc.load_config_file, _finish_save)
 
             niri_ipc.run_in_thread(

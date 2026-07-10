@@ -12,7 +12,7 @@ from gi.repository import Gtk, Pango, GLib
 from pathlib import Path
 
 from nirimod import niri_ipc
-from nirimod.kdl_parser import NIRI_CONFIG
+from nirimod.kdl_parser import NIRI_CONFIG, replace_config_file
 from nirimod.pages.base import BasePage
 
 
@@ -225,7 +225,7 @@ class RawConfigPage(BasePage):
                 self.show_toast(f"Validation error: {msg[:120]}", timeout=8)
                 return
             try:
-                tmp.replace(path)
+                replace_config_file(tmp, path)
             except Exception as e:
                 self.show_toast(f"Save error: {e}", timeout=6)
                 return

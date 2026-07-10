@@ -483,16 +483,23 @@ def load_niri_config_multi() -> tuple[list[KdlNode], list[tuple[KdlNode, Path]]]
     return _resolve_includes(raw, NIRI_CONFIG)
 
 
+def _write_target(path: Path) -> Path:
+    if path.is_symlink():
+        return path.resolve(strict=False)
+    return path
+
+
 def _atomic_write(path: Path, content: str) -> None:
-    if path.exists() and path.read_text() == content:
+    target = _write_target(path)
+    if target.exists() and target.read_text() == content:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".nirimod_tmp_")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".nirimod_tmp_")
     try:
         os.write(fd, content.encode())
         os.close(fd)
         fd = -1
-        os.replace(tmp, path)
+        os.replace(tmp, target)
     except Exception:
         if fd != -1:
             os.close(fd)
@@ -501,6 +508,12 @@ def _atomic_write(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def replace_config_file(source: Path, destination: Path) -> None:
+    """Replace a config file without replacing a destination symlink."""
+    _atomic_write(destination, source.read_text())
+    source.unlink()
 
 
 def save_niri_config_multi(

@@ -7,13 +7,21 @@ all config changes in NiriMod.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from nirimod import kdl_parser
 from nirimod.kdl_parser import (
     KdlNode,
     KdlRawString,
     find_or_create,
+    load_niri_config_multi,
     parse_kdl,
     remove_child,
+    replace_config_file,
+    save_niri_config,
+    save_niri_config_multi,
     set_child_arg,
     set_node_flag,
     write_kdl,
@@ -196,6 +204,78 @@ class TestWriteKdl(unittest.TestCase):
         out = write_kdl([parent])
         self.assertIn("gaps", out)
         self.assertIn("16", out)
+
+
+class TestConfigWrites(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.managed_dir = self.root / "managed"
+        self.active_dir = self.root / "active"
+        self.managed_dir.mkdir()
+        self.active_dir.mkdir()
+
+    def _link(self, name: str, content: str | None = None) -> tuple[Path, Path]:
+        target = self.managed_dir / name
+        if content is not None:
+            target.write_text(content)
+        link = self.active_dir / name
+        link.symlink_to(Path("..") / "managed" / name)
+        return link, target
+
+    def test_save_updates_regular_file(self):
+        config = self.active_dir / "config.kdl"
+        config.write_text("gaps 4\n")
+
+        save_niri_config(parse_kdl("gaps 8\n"), path=config)
+
+        self.assertFalse(config.is_symlink())
+        self.assertEqual(config.read_text(), "gaps 8\n")
+
+    def test_save_preserves_symlink_and_updates_target(self):
+        link, target = self._link("config.kdl", "gaps 4\n")
+
+        save_niri_config(parse_kdl("gaps 8\n"), path=link)
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(target.read_text(), "gaps 8\n")
+
+    def test_save_preserves_broken_symlink_and_creates_target(self):
+        link, target = self._link("config.kdl")
+
+        save_niri_config(parse_kdl("gaps 8\n"), path=link)
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(target.read_text(), "gaps 8\n")
+
+    def test_validated_replacement_preserves_symlink(self):
+        link, target = self._link("config.kdl", "gaps 4\n")
+        validated = self.active_dir / ".config.kdl.tmp"
+        validated.write_text("gaps 8\n")
+
+        replace_config_file(validated, link)
+
+        self.assertTrue(link.is_symlink())
+        self.assertFalse(validated.exists())
+        self.assertEqual(target.read_text(), "gaps 8\n")
+
+    def test_multi_file_save_preserves_primary_and_include_symlinks(self):
+        config_link, config_target = self._link(
+            "config.kdl", 'include "local.kdl"\nprefer-no-csd\n'
+        )
+        local_link, local_target = self._link("local.kdl", 'spawn-at-startup "old"\n')
+
+        with patch.object(kdl_parser, "NIRI_CONFIG", config_link):
+            nodes, include_slots = load_niri_config_multi()
+            startup = next(node for node in nodes if node.name == "spawn-at-startup")
+            startup.args[0] = "new"
+            save_niri_config_multi(nodes, include_slots)
+
+        self.assertTrue(config_link.is_symlink())
+        self.assertTrue(local_link.is_symlink())
+        self.assertIn('include "local.kdl"', config_target.read_text())
+        self.assertIn('spawn-at-startup "new"', local_target.read_text())
 
 
 if __name__ == "__main__":
