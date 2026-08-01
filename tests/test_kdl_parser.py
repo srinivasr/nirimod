@@ -101,6 +101,22 @@ class TestKdlRoundTrip(unittest.TestCase):
         out = write_kdl(parse_kdl(src))
         self.assertIn("prefer-no-csd", out)
 
+    def test_comment_only_child_block_preserves_braces(self):
+        src = "xkb {\n    // keep this keyboard note\n}\nafter-node\n"
+        nodes = parse_kdl(src)
+
+        self.assertTrue(nodes[0].has_block)
+        self.assertEqual(nodes[0].children, [])
+
+        out = write_kdl(nodes)
+        self.assertIn("xkb {", out)
+        self.assertIn("// keep this keyboard note", out)
+        self.assertIn("}\nafter-node", out)
+
+        roundtripped = parse_kdl(out)
+        self.assertTrue(roundtripped[0].has_block)
+        self.assertEqual(roundtripped[0].children, [])
+
 
 class TestMutationHelpers(unittest.TestCase):
     """Tests for find_or_create, set_child_arg, remove_child, set_node_flag."""

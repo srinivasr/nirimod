@@ -56,6 +56,7 @@ class KdlNode:
     args: list[Any] = field(default_factory=list)
     props: dict[str, Any] = field(default_factory=dict)
     children: list["KdlNode"] = field(default_factory=list)
+    has_block: bool = False
     leading_trivia: str = ""
     trailing_trivia: str = ""
     children_trailing_trivia: str = ""
@@ -343,6 +344,7 @@ def _parse_nodes(
                 node.trailing_trivia += accumulated_ws
                 accumulated_ws = ""
                 pos += 1
+                node.has_block = True
                 node.children, pos, node.children_trailing_trivia = _parse_nodes(
                     tokens, pos
                 )
@@ -650,7 +652,7 @@ def _write_node(node: KdlNode, indent: int = 0) -> str:
 
     res += " ".join(parts)
 
-    if node.children:
+    if node.children or node.has_block:
         if _is_inline_node(node):
             pre_brace = node.trailing_trivia if node.trailing_trivia else " "
             if not pre_brace[0].isspace():
