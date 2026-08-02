@@ -32,13 +32,16 @@ BOOL_MATCH_LABELS = {
 }
 
 BOOL_ACTION_LABELS = {
+    SCREENCAST_BLOCK_KEY: "Block from Screencast",
+}
+
+TRI_STATE_ACTION_LABELS = {
+    "open-focused": "Open Focused",
     "open-maximized": "Open Maximized",
     "open-fullscreen": "Open Fullscreen",
     "open-floating": "Open Floating",
-    SCREENCAST_BLOCK_KEY: "Block from Screencast",
     "draw-border-with-background": "Draw Border with Background",
     "clip-to-geometry": "Clip to Geometry",
-    "prefer-no-csd": "Prefer No CSD",
 }
 
 NUM_ACTION_LABELS = {
@@ -291,18 +294,18 @@ def _rule_summary(rule: KdlNode) -> tuple[str, str]:
             badges.append(f"opacity {c.args[0]}")
         elif c.name == "background-effect":
             badges.append("blur")
-        elif c.name == "open-floating":
-            badges.append("floating")
-        elif c.name == "open-maximized":
-            badges.append("maximized")
-        elif c.name == "open-fullscreen":
-            badges.append("fullscreen")
         elif c.name in ("clip-to-geometry", "geometry-corner-radius"):
             pass  # skip noisy ones
         elif c.name == "default-column-display" and c.args:
             badges.append(f"column display {c.args[0]}")
         else:
-            badges.append(c.name.replace("-", " "))
+            name = c.name.replace("-", " ")
+            if c.name.startswith("open-"):
+                name = c.name[5:]
+            if c.args and (c.args[0] is False or str(c.args[0]).lower() == "false"):
+                badges.append(f"not {name}")
+            else:
+                badges.append(name)
 
     subtitle = ",  ".join(badges[:5]) if badges else "no actions"
     return GLib.markup_escape_text(title), GLib.markup_escape_text(subtitle)
@@ -312,7 +315,15 @@ def _layer_rule_summary(rule: KdlNode) -> tuple[str, str]:
     match_node = rule.get_child("match")
     ns = str(match_node.props.get("namespace", "")) if match_node else ""
     title = f"namespace: {ns}" if ns else "(any)"
-    actions = [c.name.replace("-", " ") for c in rule.children if c.name != "match"]
+    actions = []
+    for c in rule.children:
+        if c.name == "match":
+            continue
+        name = c.name.replace("-", " ")
+        if c.args and (c.args[0] is False or str(c.args[0]).lower() == "false"):
+            actions.append(f"not {name}")
+        else:
+            actions.append(name)
     subtitle = ",  ".join(actions) if actions else "no actions"
     return GLib.markup_escape_text(title), GLib.markup_escape_text(subtitle)
 
@@ -744,6 +755,31 @@ class WindowRulesPage(BasePage):
             layout_grp.add(sr)
             bool_rows[key] = sr
 
+        tri_state_rows: dict[str, Adw.ComboRow] = {}
+        for key, label in TRI_STATE_ACTION_LABELS.items():
+            model = Gtk.StringList.new(["Unset", "True", "False"])
+            cr = Adw.ComboRow(title=label, model=model)
+            val = None
+            if rule:
+                node = rule.get_child(key)
+                if node is not None:
+                    if node.args:
+                        arg = node.args[0]
+                        if arg is False or str(arg).lower() == "false":
+                            val = False
+                        else:
+                            val = True
+                    else:
+                        val = True
+            if val is True:
+                cr.set_selected(1)
+            elif val is False:
+                cr.set_selected(2)
+            else:
+                cr.set_selected(0)
+            layout_grp.add(cr)
+            tri_state_rows[key] = cr
+
         floating_position_controls = self._add_floating_position_controls(
             layout_grp, rule
         )
@@ -907,6 +943,14 @@ class WindowRulesPage(BasePage):
             for key, sr in bool_rows.items():
                 if sr.get_active():
                     new_rule.children.append(_bool_action_node(key))
+
+            # tri-state actions
+            for key, cr in tri_state_rows.items():
+                sel = cr.get_selected()
+                if sel == 1:
+                    new_rule.children.append(KdlNode(key, args=[True]))
+                elif sel == 2:
+                    new_rule.children.append(KdlNode(key, args=[False]))
 
             # opacity
             op = op_row.get_value()
