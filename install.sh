@@ -427,14 +427,37 @@ download_source() {
   success "Source code is ready."
 }
 
+# Helper to find Python interpreter with system PyGObject (gi) support
+find_host_python_with_gi() {
+  if python3 -c "import gi" &>/dev/null; then
+    command -v python3
+    return 0
+  fi
+
+  # If ambient python3 is managed by a version manager (e.g. mise, pyenv, asdf, conda)
+  # or lacks system bindings, search standard system paths
+  local candidate
+  for candidate in /usr/bin/python3 /usr/bin/python /usr/local/bin/python3; do
+    if [ -x "$candidate" ] && "$candidate" -c "import gi" &>/dev/null; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  command -v python3 || echo "python3"
+}
+
 # Build & Wire Up
 install_app() {
   step "Setting Up Python Environment"
   cd "$INSTALL_DIR"
 
-  info "Creating virtual environment with system site-packages..."
+  local target_python
+  target_python="$(find_host_python_with_gi)"
+
+  info "Creating virtual environment with system site-packages (using $target_python)..."
   rm -rf .venv # Ensure clean state
-  run_uv venv --system-site-packages --python python3
+  run_uv venv --system-site-packages --python "$target_python"
   run_uv sync --no-dev
   
   # Verification check
@@ -444,10 +467,10 @@ install_app() {
     
     # Try to diagnose
     local host_python_ver
-    host_python_ver=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    host_python_ver=$("$target_python" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     info "Host Python: $host_python_ver"
     
-    if ! python3 -c "import gi" &>/dev/null; then
+    if ! "$target_python" -c "import gi" &>/dev/null; then
       error "PyGObject is NOT installed on your host system."
       error "Please install it via your package manager first (e.g., python3-gi or python-gobject)."
       exit 1
@@ -455,7 +478,7 @@ install_app() {
       warn "PyGObject is available on host but NOT in the venv. This is unexpected."
       warn "Attempting a fallback venv creation..."
       rm -rf .venv
-      run_uv venv --system-site-packages
+      run_uv venv --system-site-packages --python "$target_python"
       run_uv sync --no-dev
     fi
   fi
@@ -480,7 +503,7 @@ cd "\$INSTALL_DIR"
 $(declare -f needs_uv_preload_cleanup)
 $(declare -f filtered_ld_preload)
 $(declare -f run_with_filtered_preload)
-run_with_filtered_preload uv run python3 -m nirimod "\$@"
+run_with_filtered_preload "\$INSTALL_DIR/.venv/bin/python" -m nirimod "\$@"
 EOF
   chmod +x "$BIN_DIR/nirimod"
   success "Launcher created: $BIN_DIR/nirimod"
