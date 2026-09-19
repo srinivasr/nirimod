@@ -386,6 +386,7 @@ class OutputsPage(BasePage):
     def _toggle_desktop_overlay(self, active: bool):
         proc = getattr(self, "_overlay_proc", None)
         if not active:
+            self._overlay_global_y = None
             if proc is not None:
                 try:
                     if proc.stdin:
@@ -401,6 +402,7 @@ class OutputsPage(BasePage):
             return
 
         if proc is None:
+            self._overlay_global_y = None
             cmd = [sys.executable, "-m", "nirimod.alignment_overlay"]
             try:
                 self._overlay_proc = subprocess.Popen(
@@ -419,34 +421,33 @@ class OutputsPage(BasePage):
             return
         try:
             active_o, ref_o = self._get_active_and_ref_outputs()
-            ref_pos = (ref_o.get("logical") or {}) if ref_o else {}
+            if not active_o or not ref_o:
+                return
+
+            active_name = active_o.get("name", "")
+            ref_name = ref_o.get("name", "")
+
+            act_pos = (active_o.get("logical") or {})
+            act_y = act_pos.get("y", 0)
+            act_h = act_pos.get("height", 1080)
+
+            ref_pos = (ref_o.get("logical") or {})
             ref_y_val = float(ref_pos.get("y", 0))
             ref_h = float(ref_pos.get("height", 1080))
-            ref_y = ref_y_val + ref_h / 2.0
 
-            active_name = active_o.get("name") if active_o else ""
-            active_pos = (active_o.get("logical") or {}) if active_o else {}
-            act_y = active_pos.get("y", 0)
-            act_h = active_pos.get("height", 1080)
+            if self._drag_output:
+                # During mouse drag: baseline is stationary monitor fixed at its vertical center
+                ref_y = ref_y_val + ref_h / 2.0
+                self._overlay_global_y = ref_y
+            else:
+                # During static/key adjustment: anchor to stable global level so line never jumps on clicks
+                if getattr(self, "_overlay_global_y", None) is None:
+                    base = self._outputs[0]
+                    b_pos = base.get("logical") or {}
+                    self._overlay_global_y = float(b_pos.get("y", 0) + b_pos.get("height", 1080) / 2.0)
+                ref_y = self._overlay_global_y
 
-            act_pw, act_ph, _ = (
-                get_output_physical_size(
-                    active_o, getattr(self, "_custom_physical", {})
-                )
-                if active_o
-                else (0.0, 0.0, "")
-            )
-            ref_pw, ref_ph, _ = (
-                get_output_physical_size(
-                    ref_o, getattr(self, "_custom_physical", {})
-                )
-                if ref_o
-                else (0.0, 0.0, "")
-            )
-
-            has_physical = act_ph > 0 and ref_ph > 0
-
-            # Compute canonical alignment targets
+            # Canonical alignment targets for active_o relative to ref_o
             y_center = ref_y_val + (ref_h - act_h) / 2.0
             loc_center = float(ref_y - y_center)
 
@@ -473,9 +474,11 @@ class OutputsPage(BasePage):
             best_target_name, best_y, best_loc = min(
                 targets, key=lambda t: abs(act_y - t[1])
             )
-            local_y = float(ref_y - act_y)
-            active_delta_y = int(round(local_y - best_loc))
-            active_delta_mm = (active_delta_y / max(act_h, 1)) * act_ph
+            delta_y = int(round(best_y - act_y))
+            _, act_ph, _ = get_output_physical_size(
+                active_o, getattr(self, "_custom_physical", {})
+            )
+            delta_mm = (delta_y / max(act_h, 1)) * act_ph
 
             outs_info = []
             for o in self._outputs:
@@ -483,32 +486,37 @@ class OutputsPage(BasePage):
                 name = o.get("name", "")
                 oy = pos.get("y", 0)
                 oh = pos.get("height", 1080)
+                is_ref = (name == ref_name) and (len(self._outputs) > 1)
                 is_active = (name == active_name) and (len(self._outputs) > 1)
 
                 pw, ph, _ = get_output_physical_size(
                     o, getattr(self, "_custom_physical", {})
                 )
 
-                if not is_active:
-                    # Stationary reference monitor: fixed at its own vertical center
-                    out_local_y = float(oh / 2.0)
-                    if is_globally_aligned:
-                        label = f"{name} [Reference - ALIGNED: {aligned_target}]"
+                if self._drag_output:
+                    if not is_active:
+                        out_local_y = float(oh / 2.0)
                     else:
-                        label = f"{name} [Reference]"
-                    item_aligned = is_globally_aligned
-                    item_delta_y = 0
-                    item_delta_mm = 0.0
+                        out_local_y = float(ref_y - oy)
                 else:
-                    # Active monitor: moves live relative to the global reference height
-                    out_local_y = local_y
+                    out_local_y = float(ref_y - oy)
+
+                if is_active:
                     item_aligned = is_globally_aligned
-                    item_delta_y = active_delta_y
-                    item_delta_mm = round(active_delta_mm, 1)
+                    item_delta_y = delta_y
+                    item_delta_mm = round(delta_mm, 1)
                     if item_aligned:
                         label = f"{name} [PERFECTLY ALIGNED: {aligned_target}]"
                     else:
-                        label = f"{name} (ΔY={active_delta_y:+d}px / {item_delta_mm:+.1f}mm vs {best_target_name})"
+                        label = f"{name} (ΔY={delta_y:+d}px / {item_delta_mm:+.1f}mm vs {best_target_name})"
+                else:
+                    item_aligned = is_globally_aligned
+                    item_delta_y = 0
+                    item_delta_mm = 0.0
+                    if item_aligned:
+                        label = f"{name} [Reference - ALIGNED: {aligned_target}]"
+                    else:
+                        label = f"{name} [Reference Baseline]"
 
                 outs_info.append(
                     {
@@ -820,7 +828,9 @@ class OutputsPage(BasePage):
         # Red alignment guide line across screens
         if getattr(self, "_show_canvas_line", True) and len(self._outputs) >= 2 and canvas_min_x < canvas_max_x:
             active_o, ref_o = self._get_active_and_ref_outputs()
-            if is_physical and rect_map and ref_o:
+            if getattr(self, "_overlay_global_y", None) is not None:
+                line_y = off_y + self._overlay_global_y * scale
+            elif is_physical and rect_map and ref_o:
                 ref_rect = rect_map.get(ref_o.get("name"))
                 if ref_rect:
                     line_y = off_y + (ref_rect[1] + ref_rect[3] / 2.0) * scale
@@ -892,11 +902,12 @@ class OutputsPage(BasePage):
                 badge_text = f"{canvas_aligned_target} [Aligned]"
             else:
                 line_color = (235 / 255, 55 / 255, 55 / 255, 0.95)
-                nearest_name, _ = min(
+                nearest_name, nearest_y = min(
                     [("Center", y_center), ("Bottom", y_bottom), ("Top", y_top)],
                     key=lambda t: abs(act_y - t[1]),
                 )
-                badge_text = nearest_name
+                delta_y = int(round(nearest_y - act_y))
+                badge_text = f"{nearest_name} ({delta_y:+d}px)"
 
             # Crisp alignment line
             cr.set_source_rgba(*line_color)
@@ -1198,15 +1209,24 @@ class OutputsPage(BasePage):
             if self._canvas:
                 self._canvas.queue_draw()
 
-            for o in self._outputs:
-                self._apply_position(o["name"])
+            moved = False
+            if hasattr(self, "_drag_current_lx") and hasattr(self, "_drag_start_lx"):
+                if (
+                    self._drag_current_lx != self._drag_start_lx
+                    or self._drag_current_ly != self._drag_start_ly
+                ):
+                    moved = True
 
-            if self._current_out:
-                cur_pos = self._current_out.get("logical") or {}
-                if hasattr(self, "_pos_x_adj"):
-                    self._pos_x_adj.set_value(cur_pos.get("x", 0))
-                if hasattr(self, "_pos_y_adj"):
-                    self._pos_y_adj.set_value(cur_pos.get("y", 0))
+            if moved:
+                for o in self._outputs:
+                    self._apply_position(o["name"])
+
+                if self._current_out:
+                    cur_pos = self._current_out.get("logical") or {}
+                    if hasattr(self, "_pos_x_adj"):
+                        self._pos_x_adj.set_value(cur_pos.get("x", 0))
+                    if hasattr(self, "_pos_y_adj"):
+                        self._pos_y_adj.set_value(cur_pos.get("y", 0))
 
             self._drag_output = None
             self._drag_ref_name = None
@@ -1296,21 +1316,25 @@ class OutputsPage(BasePage):
             return
         pos = o.get("logical") or {}
 
-        nx = pos.get("x", 0)
-        ny = pos.get("y", 0)
+        nx = int(round(pos.get("x", 0)))
+        ny = int(round(pos.get("y", 0)))
 
         out_node = self._get_or_create_out_node(name)
         pos_node = out_node.get_child("position")
-        if pos_node is None:
+        if pos_node is not None:
+            if pos_node.props.get("x") == nx and pos_node.props.get("y") == ny:
+                return
+        else:
             pos_node = KdlNode(name="position")
             out_node.children.append(pos_node)
-        pos_node.props["x"] = int(round(nx))
-        pos_node.props["y"] = int(round(ny))
+
+        pos_node.props["x"] = nx
+        pos_node.props["y"] = ny
 
         if self._current_out and self._current_out.get("name") == name:
-            if hasattr(self, "_pos_x_adj"):
+            if hasattr(self, "_pos_x_adj") and int(self._pos_x_adj.get_value()) != nx:
                 self._pos_x_adj.set_value(nx)
-            if hasattr(self, "_pos_y_adj"):
+            if hasattr(self, "_pos_y_adj") and int(self._pos_y_adj.get_value()) != ny:
                 self._pos_y_adj.set_value(ny)
 
         self._commit("output position")
@@ -1733,21 +1757,27 @@ class OutputsPage(BasePage):
             self._canvas.queue_draw()
 
     def _set_output_pos(self, name: str, x: int, y: int):
+        nx = int(round(x))
+        ny = int(round(y))
+
         out_node = self._get_or_create_out_node(name)
         pos_node = out_node.get_child("position")
-        if pos_node is None:
+        if pos_node is not None:
+            if pos_node.props.get("x") == nx and pos_node.props.get("y") == ny:
+                return
+        else:
             pos_node = KdlNode(name="position")
             out_node.children.append(pos_node)
 
-        pos_node.props["x"] = int(round(x))
-        pos_node.props["y"] = int(round(y))
+        pos_node.props["x"] = nx
+        pos_node.props["y"] = ny
 
         o = next((out for out in self._outputs if out.get("name") == name), None)
         if o:
             if not o.get("logical"):
                 o["logical"] = {}
-            o["logical"]["x"] = x
-            o["logical"]["y"] = y
+            o["logical"]["x"] = nx
+            o["logical"]["y"] = ny
 
         self._commit("output position")
         if self._canvas:
