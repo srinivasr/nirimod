@@ -176,6 +176,7 @@ class OutputsPage(BasePage):
         self._view_mode: str = "physical"
         self._custom_physical: dict[str, dict] = {}
         self._overlay_proc: subprocess.Popen | None = None
+        self._show_canvas_line: bool = True
 
     def build(self) -> Gtk.Widget:
         tb, header, scroll, content = self._make_toolbar_page("Outputs")
@@ -212,6 +213,16 @@ class OutputsPage(BasePage):
             "toggled", lambda b: self._toggle_desktop_overlay(b.get_active())
         )
         header.pack_end(self._overlay_btn)
+
+        # Toggle Canvas Alignment Guide Line
+        self._canvas_line_btn = Gtk.ToggleButton(icon_name="view-grid-symbolic")
+        self._canvas_line_btn.set_active(getattr(self, "_show_canvas_line", True))
+        self._canvas_line_btn.set_tooltip_text(
+            "Toggle canvas alignment guide line"
+        )
+        self._canvas_line_btn.add_css_class("flat")
+        self._canvas_line_btn.connect("toggled", self._on_canvas_line_toggled)
+        header.pack_end(self._canvas_line_btn)
 
         canvas_frame = Gtk.Frame()
         canvas_frame.add_css_class("card")
@@ -255,6 +266,11 @@ class OutputsPage(BasePage):
     def _on_view_mode_toggled(self, btn: Gtk.ToggleButton):
         self._view_mode = "physical" if btn.get_active() else "logical"
         btn.set_label("Physical" if self._view_mode == "physical" else "Logical")
+        if self._canvas:
+            self._canvas.queue_draw()
+
+    def _on_canvas_line_toggled(self, btn: Gtk.ToggleButton):
+        self._show_canvas_line = btn.get_active()
         if self._canvas:
             self._canvas.queue_draw()
 
@@ -330,26 +346,9 @@ class OutputsPage(BasePage):
         if mode == "center":
             new_y = int(round(other_y + (other_h - cur_h) / 2.0))
         elif mode == "top":
-            if has_physical:
-                # Top edges align physically:
-                # Reference line is (other_ph / 2.0) mm below other's top edge.
-                # In cur_o pixels, this distance is (other_ph / 2.0) * (cur_h / cur_ph).
-                local_y = (other_ph / 2.0) * (cur_h / cur_ph)
-                ref_y = other_y + other_h / 2.0
-                new_y = int(round(ref_y - local_y))
-            else:
-                new_y = int(round(other_y))
+            new_y = int(round(other_y))
         elif mode == "bottom":
-            if has_physical:
-                # Bottom edges align physically:
-                # Reference line is (other_ph / 2.0) mm above other's bottom edge.
-                # In cur_o pixels, distance from bottom is (other_ph / 2.0) * (cur_h / cur_ph).
-                # So local_y from top is cur_h - (other_ph / 2.0) * (cur_h / cur_ph).
-                local_y = cur_h - (other_ph / 2.0) * (cur_h / cur_ph)
-                ref_y = other_y + other_h / 2.0
-                new_y = int(round(ref_y - local_y))
-            else:
-                new_y = int(round(other_y + other_h - cur_h))
+            new_y = int(round(other_y + other_h - cur_h))
         else:
             return
 
@@ -449,20 +448,13 @@ class OutputsPage(BasePage):
 
             # Compute canonical alignment targets
             y_center = ref_y_val + (ref_h - act_h) / 2.0
-            loc_center = act_h / 2.0
+            loc_center = float(ref_y - y_center)
 
-            if has_physical:
-                loc_bottom = act_h - (ref_ph / 2.0) * (act_h / act_ph)
-                y_bottom = ref_y - loc_bottom
+            y_bottom = ref_y_val + ref_h - act_h
+            loc_bottom = float(ref_y - y_bottom)
 
-                loc_top = (ref_ph / 2.0) * (act_h / act_ph)
-                y_top = ref_y - loc_top
-            else:
-                y_bottom = ref_y_val + ref_h - act_h
-                loc_bottom = ref_y - y_bottom
-
-                y_top = ref_y_val
-                loc_top = ref_y - y_top
+            y_top = ref_y_val
+            loc_top = float(ref_y - y_top)
 
             targets = [
                 ("Center", y_center, loc_center),
@@ -826,7 +818,7 @@ class OutputsPage(BasePage):
             cr.show_text(info_text)
 
         # Red alignment guide line across screens
-        if len(self._outputs) >= 2 and canvas_min_x < canvas_max_x:
+        if getattr(self, "_show_canvas_line", True) and len(self._outputs) >= 2 and canvas_min_x < canvas_max_x:
             active_o, ref_o = self._get_active_and_ref_outputs()
             if is_physical and rect_map and ref_o:
                 ref_rect = rect_map.get(ref_o.get("name"))
@@ -884,14 +876,8 @@ class OutputsPage(BasePage):
             has_phys = act_ph > 0 and ref_ph > 0
 
             y_center = ref_y_val + (ref_h - act_h) / 2.0
-            if has_phys:
-                loc_bottom = act_h - (ref_ph / 2.0) * (act_h / act_ph)
-                y_bottom = ref_global_y - loc_bottom
-                loc_top = (ref_ph / 2.0) * (act_h / act_ph)
-                y_top = ref_global_y - loc_top
-            else:
-                y_bottom = ref_y_val + ref_h - act_h
-                y_top = ref_y_val
+            y_bottom = ref_y_val + ref_h - act_h
+            y_top = ref_y_val
 
             canvas_aligned_target = None
             for t_name, t_y in [("Center", y_center), ("Bottom", y_bottom), ("Top", y_top)]:

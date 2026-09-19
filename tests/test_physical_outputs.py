@@ -599,18 +599,15 @@ class TestPhysicalOutputs(unittest.TestCase):
         page._send_overlay_update = lambda: None
         page._canvas = None
 
-        # Bottom Align (Physical)
+        # Bottom Align (Border)
         page._align_outputs("DP-Left", "bottom")
-        # 168mm from bottom on DP-Right (336 / 2 = 168mm)
-        # On DP-Left (531mm / 1920px), 168mm is 168 * 1920 / 531 = 607.46px from bottom
-        # local_y = 1920 - 607.46 = 1312.54px -> y = 720 - 1313 = -593
-        self.assertEqual(dp_left["logical"]["y"], -593)
+        # 1440 - 1920 = -480
+        self.assertEqual(dp_left["logical"]["y"], -480)
 
-        # Top Align (Physical)
+        # Top Align (Border)
         page._align_outputs("DP-Left", "top")
-        # 168mm from top on DP-Right
-        # On DP-Left, 168mm from top is 607.46px -> y = 720 - 607 = 113
-        self.assertEqual(dp_left["logical"]["y"], 113)
+        # 0
+        self.assertEqual(dp_left["logical"]["y"], 0)
 
         # Center Align
         page._align_outputs("DP-Left", "center")
@@ -623,7 +620,7 @@ class TestPhysicalOutputs(unittest.TestCase):
 
         dp = {
             "name": "DP-1",
-            "logical": {"x": 0, "y": -593, "width": 1080, "height": 1920},
+            "logical": {"x": 0, "y": -480, "width": 1080, "height": 1920},
         }
         page = object.__new__(OutputsPage)
         page._outputs = [dp]
@@ -633,11 +630,11 @@ class TestPhysicalOutputs(unittest.TestCase):
 
         # Lower line by 10px on physical screen: y must decrease by 10
         page._adjust_red_line("DP-1", 10)
-        self.assertEqual(dp["logical"]["y"], -603)
+        self.assertEqual(dp["logical"]["y"], -490)
 
         # Raise line by 1px on physical screen: y must increase by 1
         page._adjust_red_line("DP-1", -1)
-        self.assertEqual(dp["logical"]["y"], -602)
+        self.assertEqual(dp["logical"]["y"], -489)
 
     def test_overlay_badges_for_all_alignment_targets(self):
         """Verify overlay produces PERFECTLY ALIGNED badges for Bottom, Center, and Top."""
@@ -649,7 +646,7 @@ class TestPhysicalOutputs(unittest.TestCase):
         dp_left = {
             "name": "DP-Left",
             "physical_size": [299, 531],
-            "logical": {"x": 0, "y": -593, "width": 1080, "height": 1920},
+            "logical": {"x": 0, "y": -480, "width": 1080, "height": 1920},
         }
         dp_right = {
             "name": "DP-Right",
@@ -669,15 +666,15 @@ class TestPhysicalOutputs(unittest.TestCase):
         mock_proc.stdin = mock_stdin
         page._overlay_proc = mock_proc
 
-        # Bottom Aligned (-593)
+        # Bottom Aligned (-480)
         page._send_overlay_update()
         data = json.loads(mock_stdin.getvalue().decode().strip())
         self.assertTrue(data["is_aligned"])
         outs = {o["name"]: o for o in data["outputs"]}
         self.assertIn("PERFECTLY ALIGNED: Bottom", outs["DP-Left"]["label"])
 
-        # Top Aligned (113)
-        dp_left["logical"]["y"] = 113
+        # Top Aligned (0)
+        dp_left["logical"]["y"] = 0
         mock_stdin.seek(0)
         mock_stdin.truncate(0)
         page._send_overlay_update()
@@ -695,6 +692,25 @@ class TestPhysicalOutputs(unittest.TestCase):
         self.assertTrue(data_ctr["is_aligned"])
         outs_ctr = {o["name"]: o for o in data_ctr["outputs"]}
         self.assertIn("PERFECTLY ALIGNED: Center", outs_ctr["DP-Left"]["label"])
+
+    def test_canvas_guide_line_toggle(self):
+        """Verify _show_canvas_line toggle attribute and handler."""
+        from unittest.mock import MagicMock
+        from nirimod.pages.outputs import OutputsPage
+
+        page = object.__new__(OutputsPage)
+        page._show_canvas_line = True
+        page._canvas = MagicMock()
+
+        btn = MagicMock()
+        btn.get_active.return_value = False
+        page._on_canvas_line_toggled(btn)
+        self.assertFalse(page._show_canvas_line)
+        page._canvas.queue_draw.assert_called()
+
+        btn.get_active.return_value = True
+        page._on_canvas_line_toggled(btn)
+        self.assertTrue(page._show_canvas_line)
 
 
 if __name__ == "__main__":
