@@ -224,14 +224,14 @@ class OutputsPage(BasePage):
         self._canvas_line_btn.connect("toggled", self._on_canvas_line_toggled)
         header.pack_end(self._canvas_line_btn)
 
-        # Simplify Coordinates (Normalize layout origin to 0, 0)
-        self._simplify_btn = Gtk.Button(icon_name="zoom-fit-best-symbolic")
-        self._simplify_btn.set_tooltip_text(
-            "Simplify monitor coordinates (normalize origin to 0, 0)"
+        # Identify Displays (Flash numbers on physical screens)
+        self._identify_btn = Gtk.Button(icon_name="find-location-symbolic")
+        self._identify_btn.set_tooltip_text(
+            "Identify displays (flash numbers on physical screens)"
         )
-        self._simplify_btn.add_css_class("flat")
-        self._simplify_btn.connect("clicked", lambda *_: self._simplify_positions())
-        header.pack_end(self._simplify_btn)
+        self._identify_btn.add_css_class("flat")
+        self._identify_btn.connect("clicked", lambda *_: self._flash_identify())
+        header.pack_end(self._identify_btn)
 
         canvas_frame = Gtk.Frame()
         canvas_frame.add_css_class("card")
@@ -260,6 +260,15 @@ class OutputsPage(BasePage):
 
         self._out_combo = Adw.ComboRow(title="Monitor")
         self._out_combo.connect("notify::selected", self._on_output_selected)
+
+        btn_identify = Gtk.Button(label="Identify")
+        btn_identify.set_valign(Gtk.Align.CENTER)
+        btn_identify.set_tooltip_text(
+            "Identify displays: flash numbers and details on physical screens"
+        )
+        btn_identify.connect("clicked", lambda *_: self._flash_identify())
+        self._out_combo.add_suffix(btn_identify)
+
         sel_group = Adw.PreferencesGroup()
         sel_group.add(self._out_combo)
         content.append(sel_group)
@@ -267,7 +276,7 @@ class OutputsPage(BasePage):
         self._detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         content.append(self._detail_box)
 
-        tb.connect("destroy", lambda *_: self._toggle_desktop_overlay(False))
+        tb.connect("destroy", lambda *_: self._cleanup_overlays())
 
         self.refresh()
         return tb
@@ -448,6 +457,104 @@ class OutputsPage(BasePage):
         if self._canvas:
             self._canvas.queue_draw()
         self._send_overlay_update()
+
+    def _cleanup_overlays(self):
+        """Clean up both real-time alignment and temporary identify overlay processes."""
+        self._toggle_desktop_overlay(False)
+        id_proc = getattr(self, "_identify_proc", None)
+        if id_proc is not None:
+            try:
+                if id_proc.stdin:
+                    id_proc.stdin.write(b'{"action": "quit"}\n')
+                    id_proc.stdin.flush()
+            except Exception:
+                pass
+            try:
+                id_proc.terminate()
+            except Exception:
+                pass
+            self._identify_proc = None
+
+    def _flash_identify(self):
+        """Flash identification HUD cards with screen numbers on physical displays."""
+        if not self._outputs:
+            return
+
+        payload = []
+        for i, o in enumerate(self._outputs):
+            name = o.get("name", "")
+            model = o.get("model", "")
+            make = o.get("make", "")
+            pos = o.get("logical") or {}
+            x = pos.get("x", 0)
+            y = pos.get("y", 0)
+            mode_idx = o.get("current_mode")
+            modes = o.get("modes", [])
+            mode = (
+                modes[mode_idx]
+                if isinstance(mode_idx, int) and 0 <= mode_idx < len(modes)
+                else {}
+            )
+            res = f"{mode.get('width', '?')}×{mode.get('height', '?')}"
+            refresh_val = mode.get("refresh_rate", 60000)
+            refresh = f"{refresh_val / 1000:.1f}Hz" if refresh_val else ""
+            scale = pos.get("scale", 1.0)
+            _, _, phys_label = get_output_physical_size(
+                o, getattr(self, "_custom_physical", {})
+            )
+            phys_str = phys_label.split(" (")[0]
+
+            payload.append(
+                {
+                    "index": i + 1,
+                    "name": name,
+                    "model": model,
+                    "make": make,
+                    "x": x,
+                    "y": y,
+                    "res": res,
+                    "refresh": refresh,
+                    "scale": scale,
+                    "phys": phys_str,
+                }
+            )
+
+        msg = json.dumps({"action": "identify", "outputs": payload}) + "\n"
+
+        # Check if real-time alignment overlay is already running
+        proc = getattr(self, "_overlay_proc", None)
+        if proc is not None and proc.poll() is None and proc.stdin:
+            try:
+                proc.stdin.write(msg.encode("utf-8"))
+                proc.stdin.flush()
+                return
+            except Exception:
+                pass
+
+        # Check if a temporary identify process is already active
+        id_proc = getattr(self, "_identify_proc", None)
+        if id_proc is not None and id_proc.poll() is None and id_proc.stdin:
+            try:
+                id_proc.stdin.write(msg.encode("utf-8"))
+                id_proc.stdin.flush()
+                return
+            except Exception:
+                pass
+
+        # Launch one-shot identify process
+        cmd = [sys.executable, "-m", "nirimod.alignment_overlay", "--identify"]
+        try:
+            self._identify_proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if self._identify_proc.stdin:
+                self._identify_proc.stdin.write(msg.encode("utf-8"))
+                self._identify_proc.stdin.flush()
+        except Exception as e:
+            print(f"Failed to start identify overlay: {e}", file=sys.stderr)
 
     def _toggle_desktop_overlay(self, active: bool):
         proc = getattr(self, "_overlay_proc", None)
@@ -847,6 +954,37 @@ class OutputsPage(BasePage):
             else:
                 cr.set_source_rgba(0.4, 0.4, 0.45, 0.6)
             cr.stroke()
+
+            # Display number badge (1, 2, ...) in top-left corner
+            if w >= 36 and h >= 36:
+                badge_r = 10.5
+                badge_cx = x + 16.0
+                badge_cy = y + 16.0
+                badge_str = str(i + 1)
+
+                cr.arc(badge_cx, badge_cy, badge_r, 0, 2 * math.pi)
+                if is_sel:
+                    cr.set_source_rgba(20 / 255, 20 / 255, 28 / 255, 0.88)
+                else:
+                    cr.set_source_rgba(155 / 255, 109 / 255, 1.0, 0.92)
+                cr.fill_preserve()
+
+                cr.set_line_width(1.2)
+                if is_sel:
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.3)
+                else:
+                    cr.set_source_rgba(1.0, 1.0, 1.0, 0.5)
+                cr.stroke()
+
+                cr.select_font_face("Sans", 0, 1)
+                cr.set_font_size(10.5)
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.98)
+                b_te = cr.text_extents(badge_str)
+                cr.move_to(
+                    badge_cx - (b_te.x_bearing + b_te.width / 2.0),
+                    badge_cy - (b_te.y_bearing + b_te.height / 2.0),
+                )
+                cr.show_text(badge_str)
 
             name = o.get("name", f"Output {i}")
             mode_idx = o.get("current_mode")

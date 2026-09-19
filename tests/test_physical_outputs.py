@@ -825,6 +825,121 @@ class TestPhysicalOutputs(unittest.TestCase):
             dp_right["logical"]["y"] + dp_right["logical"]["height"],
         )
 
+    def test_flash_identify_payload(self):
+        """Verify _flash_identify constructs proper payload with indexes and specs."""
+        import io
+        import json
+        from unittest.mock import MagicMock
+        from nirimod.pages.outputs import OutputsPage
+
+        dp1 = {
+            "name": "DP-1",
+            "model": "Dell U2720Q",
+            "make": "Dell Inc.",
+            "modes": [{"width": 3840, "height": 2160, "refresh_rate": 60000}],
+            "current_mode": 0,
+            "logical": {"x": 0, "y": 0, "scale": 1.5},
+            "physical_size": [598, 336],
+        }
+        dp2 = {
+            "name": "DP-2",
+            "model": "27GL850",
+            "make": "LG",
+            "modes": [{"width": 2560, "height": 1440, "refresh_rate": 144000}],
+            "current_mode": 0,
+            "logical": {"x": 2560, "y": 0, "scale": 1.0},
+            "physical_size": [597, 336],
+        }
+
+        page = object.__new__(OutputsPage)
+        page._outputs = [dp1, dp2]
+        page._custom_physical = {}
+
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_stdin = io.BytesIO()
+        mock_proc.stdin = mock_stdin
+        page._overlay_proc = mock_proc
+        page._identify_proc = None
+
+        page._flash_identify()
+
+        data = json.loads(mock_stdin.getvalue().decode().strip())
+        self.assertEqual(data["action"], "identify")
+        self.assertEqual(len(data["outputs"]), 2)
+
+        out1 = data["outputs"][0]
+        self.assertEqual(out1["index"], 1)
+        self.assertEqual(out1["name"], "DP-1")
+        self.assertEqual(out1["model"], "Dell U2720Q")
+        self.assertEqual(out1["res"], "3840×2160")
+        self.assertEqual(out1["refresh"], "60.0Hz")
+        self.assertEqual(out1["scale"], 1.5)
+        self.assertIn("598×336 mm", out1["phys"])
+
+        out2 = data["outputs"][1]
+        self.assertEqual(out2["index"], 2)
+        self.assertEqual(out2["name"], "DP-2")
+        self.assertEqual(out2["model"], "27GL850")
+        self.assertEqual(out2["res"], "2560×1440")
+        self.assertEqual(out2["refresh"], "144.0Hz")
+
+    def test_cleanup_overlays_terminates_both(self):
+        """Verify _cleanup_overlays closes both _overlay_proc and _identify_proc."""
+        from unittest.mock import MagicMock
+        from nirimod.pages.outputs import OutputsPage
+
+        page = object.__new__(OutputsPage)
+        proc1 = MagicMock()
+        proc2 = MagicMock()
+        proc1.poll.return_value = None
+        proc2.poll.return_value = None
+        proc1.stdin = None
+        proc2.stdin = None
+        page._overlay_proc = proc1
+        page._identify_proc = proc2
+        page._overlay_global_y = 500
+
+        page._cleanup_overlays()
+
+        self.assertIsNone(page._overlay_proc)
+        self.assertIsNone(page._identify_proc)
+        self.assertIsNone(page._overlay_global_y)
+        proc1.terminate.assert_called_once()
+        proc2.terminate.assert_called_once()
+
+    def test_overlay_cairo_draw_identify_card(self):
+        """Verify _draw_identify_card executes in GTK3 overlay environment without cairo errors."""
+        import subprocess
+        import sys
+
+        code = (
+            "import cairo\n"
+            "from nirimod.alignment_overlay import MonitorOverlay\n"
+            "surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1920, 1080)\n"
+            "cr = cairo.Context(surf)\n"
+            "ov = object.__new__(MonitorOverlay)\n"
+            "ov.index = 0\n"
+            "ov.identify_info = {\n"
+            "    'index': 1,\n"
+            "    'name': 'DP-1',\n"
+            "    'model': 'Dell U2720Q',\n"
+            "    'res': '3840×2160',\n"
+            "    'refresh': '60.0Hz',\n"
+            "    'phys': '598×336 mm',\n"
+            "}\n"
+            "ov._draw_identify_card(cr, 1920, 1080)\n"
+            "print('SUCCESS')\n"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = proc.communicate(timeout=5)
+        self.assertEqual(proc.returncode, 0, f"Error: {stderr.decode()}")
+        self.assertIn(b"SUCCESS", stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
