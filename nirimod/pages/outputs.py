@@ -224,6 +224,15 @@ class OutputsPage(BasePage):
         self._canvas_line_btn.connect("toggled", self._on_canvas_line_toggled)
         header.pack_end(self._canvas_line_btn)
 
+        # Simplify Coordinates (Normalize layout origin to 0, 0)
+        self._simplify_btn = Gtk.Button(icon_name="zoom-fit-best-symbolic")
+        self._simplify_btn.set_tooltip_text(
+            "Simplify monitor coordinates (normalize origin to 0, 0)"
+        )
+        self._simplify_btn.add_css_class("flat")
+        self._simplify_btn.connect("clicked", lambda *_: self._simplify_positions())
+        header.pack_end(self._simplify_btn)
+
         canvas_frame = Gtk.Frame()
         canvas_frame.add_css_class("card")
         canvas_frame.set_margin_bottom(8)
@@ -379,6 +388,63 @@ class OutputsPage(BasePage):
         self._set_output_pos(name, cur_x, new_y)
         if hasattr(self, "_pos_y_adj"):
             self._pos_y_adj.set_value(new_y)
+        if self._canvas:
+            self._canvas.queue_draw()
+        self._send_overlay_update()
+
+    def _simplify_positions(self):
+        """Simplify output positions by translating the bounding box origin to (0, 0).
+
+        Preserves exact relative distances between displays while eliminating
+        unnecessary coordinate offsets (e.g. x=-1010, y=-677 -> x=0, y=0).
+        """
+        if not self._outputs:
+            return
+
+        positions = []
+        for o in self._outputs:
+            pos = o.get("logical") or {}
+            positions.append((pos.get("x", 0), pos.get("y", 0)))
+
+        min_x = min(p[0] for p in positions)
+        min_y = min(p[1] for p in positions)
+
+        if min_x == 0 and min_y == 0:
+            return
+
+        for o in self._outputs:
+            name = o.get("name")
+            if not name:
+                continue
+            pos = o.get("logical") or {}
+            cur_x = pos.get("x", 0)
+            cur_y = pos.get("y", 0)
+            new_x = int(round(cur_x - min_x))
+            new_y = int(round(cur_y - min_y))
+
+            if not o.get("logical"):
+                o["logical"] = {}
+            o["logical"]["x"] = new_x
+            o["logical"]["y"] = new_y
+
+            out_node = self._get_or_create_out_node(name)
+            pos_node = out_node.get_child("position")
+            if pos_node is None:
+                pos_node = KdlNode(name="position")
+                out_node.children.append(pos_node)
+            pos_node.props["x"] = new_x
+            pos_node.props["y"] = new_y
+
+        if self._current_out:
+            cur_pos = self._current_out.get("logical") or {}
+            if hasattr(self, "_pos_x_adj"):
+                self._pos_x_adj.set_value(cur_pos.get("x", 0))
+            if hasattr(self, "_pos_y_adj"):
+                self._pos_y_adj.set_value(cur_pos.get("y", 0))
+
+        self._overlay_global_y = None
+
+        self._commit("simplify output positions")
         if self._canvas:
             self._canvas.queue_draw()
         self._send_overlay_update()
@@ -1498,6 +1564,13 @@ class OutputsPage(BasePage):
                 "clicked", lambda *_: self._align_outputs(name, "bottom")
             )
             align_box.append(btn_bottom)
+
+            btn_simplify = Gtk.Button(label="Simplify")
+            btn_simplify.set_tooltip_text(
+                "Simplify coordinates: shift all monitors so min(x)=0, min(y)=0"
+            )
+            btn_simplify.connect("clicked", lambda *_: self._simplify_positions())
+            align_box.append(btn_simplify)
 
             align_row.add_suffix(align_box)
             grp.add(align_row)

@@ -712,6 +712,119 @@ class TestPhysicalOutputs(unittest.TestCase):
         page._on_canvas_line_toggled(btn)
         self.assertTrue(page._show_canvas_line)
 
+    def test_simplify_positions_negative_offsets(self):
+        """Verify _simplify_positions normalizes negative offsets to (0, 0) while preserving geometry."""
+        from unittest.mock import MagicMock
+        from nirimod.pages.outputs import OutputsPage
+
+        dp1 = {
+            "name": "DP-1",
+            "logical": {"x": -1010, "y": -677, "width": 1080, "height": 1920},
+        }
+        dp2 = {
+            "name": "DP-2",
+            "logical": {"x": 70, "y": -104, "width": 2560, "height": 1440},
+        }
+
+        page = object.__new__(OutputsPage)
+        page._outputs = [dp1, dp2]
+        nodes = []
+        page._win = MagicMock()
+        page._win.get_nodes.return_value = nodes
+        page._current_out = dp1
+        commits = []
+        page._commit = lambda desc: commits.append(desc)
+        page._canvas = None
+        page._send_overlay_update = lambda: None
+
+        page._simplify_positions()
+
+        # Min x was -1010, min y was -677
+        self.assertEqual(dp1["logical"]["x"], 0)
+        self.assertEqual(dp1["logical"]["y"], 0)
+        self.assertEqual(dp2["logical"]["x"], 1080)
+        self.assertEqual(dp2["logical"]["y"], 573)
+        self.assertIn("simplify output positions", commits)
+
+        # Verify KDL nodes match
+        node1 = page._get_or_create_out_node("DP-1")
+        self.assertEqual(node1.get_child("position").props["x"], 0)
+        self.assertEqual(node1.get_child("position").props["y"], 0)
+
+        node2 = page._get_or_create_out_node("DP-2")
+        self.assertEqual(node2.get_child("position").props["x"], 1080)
+        self.assertEqual(node2.get_child("position").props["y"], 573)
+
+    def test_simplify_positions_already_normalized(self):
+        """Verify _simplify_positions is a no-op if already at (0, 0)."""
+        from unittest.mock import MagicMock
+        from nirimod.pages.outputs import OutputsPage
+
+        dp1 = {
+            "name": "DP-1",
+            "logical": {"x": 0, "y": 0, "width": 1080, "height": 1920},
+        }
+        dp2 = {
+            "name": "DP-2",
+            "logical": {"x": 1080, "y": 480, "width": 2560, "height": 1440},
+        }
+
+        page = object.__new__(OutputsPage)
+        page._outputs = [dp1, dp2]
+        nodes = []
+        page._win = MagicMock()
+        page._win.get_nodes.return_value = nodes
+        page._current_out = dp1
+        commits = []
+        page._commit = lambda desc: commits.append(desc)
+        page._canvas = None
+        page._send_overlay_update = lambda: None
+
+        page._simplify_positions()
+        self.assertEqual(commits, [])
+        self.assertEqual(dp1["logical"]["x"], 0)
+        self.assertEqual(dp1["logical"]["y"], 0)
+        self.assertEqual(dp2["logical"]["x"], 1080)
+        self.assertEqual(dp2["logical"]["y"], 480)
+
+    def test_simplify_positions_preserves_alignment(self):
+        """Verify that bottom alignment is preserved after position simplification."""
+        from unittest.mock import MagicMock
+        from nirimod.pages.outputs import OutputsPage
+
+        dp_left = {
+            "name": "DP-Left",
+            "logical": {"x": 0, "y": -480, "width": 1080, "height": 1920},
+        }
+        dp_right = {
+            "name": "DP-Right",
+            "logical": {"x": 1080, "y": 0, "width": 2560, "height": 1440},
+        }
+
+        page = object.__new__(OutputsPage)
+        page._outputs = [dp_left, dp_right]
+        nodes = []
+        page._win = MagicMock()
+        page._win.get_nodes.return_value = nodes
+        page._current_out = dp_left
+        page._commit = lambda desc: None
+        page._canvas = None
+        page._send_overlay_update = lambda: None
+
+        page._simplify_positions()
+
+        # Min y was -480, so +480 shift
+        self.assertEqual(dp_left["logical"]["x"], 0)
+        self.assertEqual(dp_left["logical"]["y"], 0)
+        self.assertEqual(dp_right["logical"]["x"], 1080)
+        self.assertEqual(dp_right["logical"]["y"], 480)
+
+        # Bottom of left: 0 + 1920 = 1920; bottom of right: 480 + 1440 = 1920
+        self.assertEqual(
+            dp_left["logical"]["y"] + dp_left["logical"]["height"],
+            dp_right["logical"]["y"] + dp_right["logical"]["height"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
