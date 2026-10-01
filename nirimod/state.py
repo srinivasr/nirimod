@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,6 +35,8 @@ class AppState:
         self._dirty: bool = False
         self._include_slots: list[tuple[KdlNode, Path]] = []
         self._source_files: set[Path] = set()
+        self._saved_nodes: list[KdlNode] = []
+        self._current_nodes: list[KdlNode] = []
 
     def load(self) -> None:
         from nirimod import niri_ipc
@@ -48,6 +51,8 @@ class AppState:
             if path.exists():
                 self._source_files.add(path)
         self._saved_kdl = write_kdl(self._nodes) if self._nodes else ""
+        self._saved_nodes = copy.deepcopy(self._nodes)
+        self._current_nodes = copy.deepcopy(self._nodes)
         self._dirty = False
 
     @property
@@ -57,6 +62,7 @@ class AppState:
     @nodes.setter
     def nodes(self, value: list[KdlNode]) -> None:
         self._nodes = value
+        self._current_nodes = copy.deepcopy(value)
 
     @property
     def saved_kdl(self) -> str:
@@ -97,13 +103,66 @@ class AppState:
         return self._undo
 
     def push_undo(self, description: str, before: str, after: str) -> None:
-        self._undo.push(UndoEntry(description, before, after))
+        nodes_before = None
+        if self._current_nodes and write_kdl(self._current_nodes) == before:
+            nodes_before = copy.deepcopy(self._current_nodes)
+        elif write_kdl(self._nodes) == before:
+            nodes_before = copy.deepcopy(self._nodes)
+
+        nodes_after = None
+        if write_kdl(self._nodes) == after:
+            nodes_after = copy.deepcopy(self._nodes)
+
+        if nodes_after is not None:
+            self._current_nodes = copy.deepcopy(nodes_after)
+        else:
+            self._current_nodes = self._restore_nodes_from_snapshot(after)
+
+        entry = UndoEntry(
+            description=description,
+            snapshot_before=before,
+            snapshot_after=after,
+            nodes_before=nodes_before,
+            nodes_after=nodes_after,
+        )
+        self._undo.push(entry)
+
+    def _restore_nodes_from_snapshot(self, snapshot: str) -> list[KdlNode]:
+        nodes = parse_kdl(snapshot) if snapshot else []
+        if self._include_slots:
+            name_counts: dict[str, int] = {}
+            seq_map: dict[tuple[str, int], tuple[Path, int]] = {}
+            ref = self._saved_nodes or self._current_nodes
+            for n in ref:
+                if n.source_file is not None:
+                    idx = name_counts.get(n.name, 0)
+                    name_counts[n.name] = idx + 1
+                    seq_map[(n.name, idx)] = (
+                        n.source_file,
+                        getattr(n, "_primary_order", 0),
+                    )
+
+            restore_counts: dict[str, int] = {}
+            for n in nodes:
+                if n.source_file is None:
+                    idx = restore_counts.get(n.name, 0)
+                    restore_counts[n.name] = idx + 1
+                    if (n.name, idx) in seq_map:
+                        n.source_file, n._primary_order = seq_map[(n.name, idx)]
+                    elif (n.name, 0) in seq_map:
+                        n.source_file, n._primary_order = seq_map[(n.name, 0)]
+        return nodes
 
     def apply_undo(self) -> UndoEntry | None:
         entry = self._undo.pop_undo()
         if entry is None:
             return None
-        self._nodes = parse_kdl(entry.snapshot_before)
+        self._nodes = (
+            copy.deepcopy(entry.nodes_before)
+            if entry.nodes_before is not None
+            else self._restore_nodes_from_snapshot(entry.snapshot_before)
+        )
+        self._current_nodes = copy.deepcopy(self._nodes)
         self._dirty = entry.snapshot_before != self._saved_kdl
         return entry
 
@@ -111,17 +170,30 @@ class AppState:
         entry = self._undo.pop_redo()
         if entry is None:
             return None
-        self._nodes = parse_kdl(entry.snapshot_after)
+        self._nodes = (
+            copy.deepcopy(entry.nodes_after)
+            if entry.nodes_after is not None
+            else self._restore_nodes_from_snapshot(entry.snapshot_after)
+        )
+        self._current_nodes = copy.deepcopy(self._nodes)
         self._dirty = entry.snapshot_after != self._saved_kdl
         return entry
 
     def discard(self) -> None:
-        self._nodes = parse_kdl(self._saved_kdl) if self._saved_kdl else []
+        if self._saved_nodes:
+            self._nodes = copy.deepcopy(self._saved_nodes)
+        elif self._saved_kdl:
+            self._nodes = self._restore_nodes_from_snapshot(self._saved_kdl)
+        else:
+            self._nodes = []
+        self._current_nodes = copy.deepcopy(self._nodes)
         self._undo.clear()
         self._dirty = False
 
     def commit_save(self, new_kdl: str) -> None:
         self._saved_kdl = new_kdl
+        self._saved_nodes = copy.deepcopy(self._nodes)
+        self._current_nodes = copy.deepcopy(self._nodes)
         self._undo.clear()
         self._dirty = False
 
@@ -131,6 +203,9 @@ class AppState:
         for _, path in self._include_slots:
             if path.exists():
                 self._source_files.add(path)
+        self._saved_kdl = write_kdl(self._nodes) if self._nodes else ""
+        self._saved_nodes = copy.deepcopy(self._nodes)
+        self._current_nodes = copy.deepcopy(self._nodes)
 
     def write_current_kdl(self) -> str:
         return write_kdl(self._nodes)

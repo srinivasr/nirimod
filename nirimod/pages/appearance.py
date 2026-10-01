@@ -66,7 +66,7 @@ class AppearancePage(BasePage):
         )
         shadow_grp.add(shadow_on_row)
 
-        soft_val = int(shadow_node.child_arg("softness") or 30)
+        soft_val = int(shadow_node.child_arg("softness", 30))
         softness_adj = Gtk.Adjustment(
             value=soft_val, lower=0, upper=100, step_increment=1
         )
@@ -85,7 +85,7 @@ class AppearancePage(BasePage):
         softness_row.connect("notify::value", _on_soft_changed)
         shadow_grp.add(softness_row)
 
-        spread_val = int(shadow_node.child_arg("spread") or 5)
+        spread_val = int(shadow_node.child_arg("spread", 5))
         spread_adj = Gtk.Adjustment(
             value=spread_val, lower=-50, upper=100, step_increment=1
         )
@@ -323,7 +323,7 @@ class AppearancePage(BasePage):
         )
         grp.add(off_row)
 
-        width_val = int(node.child_arg("width") or 4)
+        width_val = int(node.child_arg("width", 4))
         width_adj = Gtk.Adjustment(value=width_val, lower=1, upper=20, step_increment=1)
         width_row = Adw.SpinRow(title="Width (px)", adjustment=width_adj, digits=0)
 

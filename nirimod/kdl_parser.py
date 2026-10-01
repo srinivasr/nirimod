@@ -242,11 +242,16 @@ def _lex(text: str) -> list[tuple[str, str]]:
             if text[j] == "/" and j + 1 < n and text[j + 1] in "-/*":
                 break
             j += 1
-        tok = text[i:j]
-        if tok:
-            tokens.append((_TOK_PLAIN, tok))
+        if j == i:
+            tokens.append((_TOK_PLAIN, text[i]))
             in_node = True
-        i = j
+            i += 1
+        else:
+            tok = text[i:j]
+            if tok:
+                tokens.append((_TOK_PLAIN, tok))
+                in_node = True
+            i = j
 
     if in_node:
         tokens.append((_TOK_EOF, ""))
@@ -465,7 +470,8 @@ def _resolve_includes(
         node.source_file = base
         if depth == 0:
             node._primary_order = i
-        target = base.parent / node.args[0]
+        inc_path = Path(node.args[0]).expanduser()
+        target = inc_path if inc_path.is_absolute() else base.parent / inc_path
         slots.append((node, target))
 
         if not target.exists():

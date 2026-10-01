@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -8,6 +9,8 @@ class UndoEntry:
     description: str
     snapshot_before: str
     snapshot_after: str
+    nodes_before: list[Any] | None = None
+    nodes_after: list[Any] | None = None
 
 
 class UndoManager:

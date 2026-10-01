@@ -39,7 +39,12 @@ def backup_all_sources(source_files: set[Path], limit: int = 10) -> Path | None:
 
     if limit > 0:
         backups = sorted(
-            [p for p in kdl_parser.BACKUP_DIR.iterdir() if p.is_dir()],
+            [
+                p
+                for p in kdl_parser.BACKUP_DIR.iterdir()
+                if p.is_dir()
+                and re.match(r"^(?:\(Gen|v|gen)\d+", p.name, re.IGNORECASE)
+            ],
             key=lambda p: p.stat().st_mtime,
         )
         while len(backups) > limit:

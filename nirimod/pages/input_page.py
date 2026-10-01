@@ -62,7 +62,7 @@ class InputPage(BasePage):
             self._xkb_entries[key] = row
 
         delay_adj = Gtk.Adjustment(
-            value=kb_node.child_arg("repeat-delay") or 600,
+            value=int(kb_node.child_arg("repeat-delay", 600)),
             lower=100,
             upper=3000,
             step_increment=50,
@@ -77,7 +77,7 @@ class InputPage(BasePage):
         kb_expander.add_row(delay_row)
 
         rate_adj = Gtk.Adjustment(
-            value=kb_node.child_arg("repeat-rate") or 25,
+            value=int(kb_node.child_arg("repeat-rate", 25)),
             lower=1,
             upper=200,
             step_increment=1,
@@ -338,7 +338,7 @@ class InputPage(BasePage):
         )
         m_expander.add_row(m_sm_row)
 
-        m_btn_val = int(m_node.child_arg("scroll-button") or 274)
+        m_btn_val = int(m_node.child_arg("scroll-button", 274))
         m_btn_adj = Gtk.Adjustment(
             value=m_btn_val,
             lower=1,
@@ -453,9 +453,7 @@ class InputPage(BasePage):
         cursor_grp = Adw.PreferencesGroup(title="Cursor")
         cursor_node = next((n for n in nodes if n.name == "cursor"), None)
 
-        size_val = (
-            int(cursor_node.child_arg("xcursor-size") or 24) if cursor_node else 24
-        )
+        size_val = int(cursor_node.child_arg("xcursor-size", 24)) if cursor_node else 24
         size_adj = Gtk.Adjustment(value=size_val, lower=8, upper=256, step_increment=2)
         size_row = Adw.SpinRow(title="Cursor Size (px)", adjustment=size_adj, digits=0)
         size_row.connect(

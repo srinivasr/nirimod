@@ -163,5 +163,82 @@ class TestLoad(unittest.TestCase):
         self.assertFalse(state.is_dirty)
 
 
+class TestMultiFileUndo(unittest.TestCase):
+    def test_undo_preserves_source_files_and_prevents_duplicate_blocks(self):
+        from pathlib import Path
+        import tempfile
+        import shutil
+        from nirimod import kdl_parser as K
+
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            main = tmp / "config.kdl"
+            inputs = tmp / "inputs.kdl"
+            main.write_text(
+                'include "inputs.kdl"\n\nbinds {\n  Mod4+Q { close-window }\n}\n'
+            )
+            inputs.write_text("touchpad {\n  tap\n}\n")
+
+            K.set_paths(config_path=main, backup_path=tmp / "backups")
+            state = AppState()
+            state.load()
+
+            self.assertTrue(state.is_multi_file)
+            tp_node = next(n for n in state.nodes if n.name == "touchpad")
+            self.assertEqual(tp_node.source_file, inputs)
+
+            before = state.write_current_kdl()
+            K.set_child_arg(tp_node, "tap", False)
+            after = state.write_current_kdl()
+            state.push_undo("change tap", before, after)
+            state.mark_dirty()
+
+            state.apply_undo()
+            tp_after_undo = next(n for n in state.nodes if n.name == "touchpad")
+            self.assertEqual(tp_after_undo.source_file, inputs)
+
+            state.write_to_path()
+            self.assertIn("touchpad", inputs.read_text())
+            self.assertNotIn("touchpad", main.read_text())
+            self.assertIn('include "inputs.kdl"', main.read_text())
+
+            state.apply_redo()
+            tp_after_redo = next(n for n in state.nodes if n.name == "touchpad")
+            self.assertEqual(tp_after_redo.source_file, inputs)
+            state.write_to_path()
+            self.assertNotIn("touchpad", main.read_text())
+        finally:
+            shutil.rmtree(tmp)
+            K.set_paths()
+
+
+class TestZeroValueDefaults(unittest.TestCase):
+    def test_gaps_zero_preserved(self):
+        from nirimod.kdl_parser import parse_kdl
+
+        nodes = parse_kdl("layout {\n  gaps 0\n}\n")
+        self.assertEqual(nodes[0].child_arg("gaps", 16), 0)
+
+    def test_shadow_softness_and_spread_zero_preserved(self):
+        from nirimod.kdl_parser import parse_kdl
+
+        nodes = parse_kdl("shadow {\n  softness 0\n  spread 0\n}\n")
+        self.assertEqual(nodes[0].child_arg("softness", 30), 0)
+        self.assertEqual(nodes[0].child_arg("spread", 5), 0)
+
+    def test_repeat_delay_and_rate_zero_preserved(self):
+        from nirimod.kdl_parser import parse_kdl
+
+        nodes = parse_kdl("keyboard {\n  repeat-delay 0\n  repeat-rate 0\n}\n")
+        self.assertEqual(nodes[0].child_arg("repeat-delay", 600), 0)
+        self.assertEqual(nodes[0].child_arg("repeat-rate", 25), 0)
+
+    def test_slowdown_zero_preserved(self):
+        from nirimod.kdl_parser import parse_kdl
+
+        nodes = parse_kdl("animations {\n  slowdown 0.0\n}\n")
+        self.assertEqual(nodes[0].child_arg("slowdown", 1.0), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

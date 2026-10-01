@@ -35,7 +35,7 @@ class LayoutPage(BasePage):
 
         basic_grp = Adw.PreferencesGroup(title="General")
 
-        gaps_val = int(layout.child_arg("gaps") or 16)
+        gaps_val = int(layout.child_arg("gaps", 16))
         gaps_adj = Gtk.Adjustment(value=gaps_val, lower=0, upper=200, step_increment=2)
         gaps_row = Adw.SpinRow(title="Window Gaps (px)", adjustment=gaps_adj, digits=0)
 

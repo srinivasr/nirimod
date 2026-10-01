@@ -26,13 +26,15 @@ FALLBACK_TERMINALS = [
 def check_for_updates(callback):
 
     def _do_check():
+        glib = None
         try:
             from gi.repository import GLib
 
-            if not os.path.isdir(os.path.join(INSTALL_DIR, ".git")):
-                GLib.idle_add(callback, None, None)
-                return
+            glib = GLib
 
+            if not os.path.isdir(os.path.join(INSTALL_DIR, ".git")):
+                glib.idle_add(callback, None, None)
+                return
             local_hash = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"],
                 cwd=INSTALL_DIR,
@@ -50,13 +52,19 @@ def check_for_updates(callback):
                 )
 
             if _update_available(local_hash, remote_hash, INSTALL_DIR):
-                GLib.idle_add(callback, remote_hash, commit_msg)
+                glib.idle_add(callback, remote_hash, commit_msg)
             else:
-                GLib.idle_add(callback, None, None)
+                glib.idle_add(callback, None, None)
 
         except Exception as e:
             print(f"Update check failed: {e}")
-            GLib.idle_add(callback, None, None)
+            if glib is not None:
+                glib.idle_add(callback, None, None)
+            else:
+                try:
+                    callback(None, None)
+                except Exception:
+                    pass
 
     threading.Thread(target=_do_check, daemon=True).start()
 
@@ -110,15 +118,18 @@ def _build_terminal_command(terminal: str, script_path: str) -> list[str] | None
 def launch_updater_in_terminal():
 
     script_content = """#!/usr/bin/env bash
+trap 'rm -f "$0"' EXIT
 echo "Starting NiriMod update..."
 curl -sSL https://raw.githubusercontent.com/srinivasr/nirimod/main/install.sh | bash -s -- --install
 echo ""
 echo "Update complete! Press Enter to close this window."
 read
 """
-    script_path = os.path.join(tempfile.gettempdir(), "nirimod_update.sh")
-    with open(script_path, "w") as f:
+    with tempfile.NamedTemporaryFile(
+        "w", prefix="nirimod_update_", suffix=".sh", delete=False
+    ) as f:
         f.write(script_content)
+        script_path = f.name
     os.chmod(script_path, stat.S_IRWXU)
 
     for term in _terminal_candidates():

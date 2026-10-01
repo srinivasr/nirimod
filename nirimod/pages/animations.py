@@ -522,7 +522,7 @@ class AnimationsPage(BasePage):
         )
         off_grp.add(off_row)
 
-        slowdown_val = float(anim_node.child_arg("slowdown") or 1.0)
+        slowdown_val = float(anim_node.child_arg("slowdown", 1.0))
         slowdown_adj = Gtk.Adjustment(
             value=slowdown_val, lower=0.1, upper=10.0, step_increment=0.1
         )

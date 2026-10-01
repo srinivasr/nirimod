@@ -5,9 +5,6 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-import pytest
-
-pytest.importorskip("gi")
 
 import unittest
 from unittest.mock import patch
@@ -107,9 +104,11 @@ class TestLaunchUpdaterInTerminal(unittest.TestCase):
         ):
             updater.launch_updater_in_terminal()
 
-        popen.assert_called_once_with(
-            ["ghostty", "-e", os.path.join(temp_dir, "nirimod_update.sh")]
-        )
+        popen.assert_called_once()
+        cmd = popen.call_args[0][0]
+        self.assertEqual(cmd[:2], ["ghostty", "-e"])
+        self.assertTrue(cmd[2].startswith(os.path.join(temp_dir, "nirimod_update_")))
+        self.assertTrue(cmd[2].endswith(".sh"))
 
 
 if __name__ == "__main__":

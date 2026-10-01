@@ -310,6 +310,25 @@ class TestConfigWrites(unittest.TestCase):
         self.assertIn('include "local.kdl"', config_target.read_text())
         self.assertIn('spawn-at-startup "new"', local_target.read_text())
 
+    def test_lexer_handles_backslash_without_infinite_loop(self):
+        src = "window-rule {\n  match /app-id\\.foo/\n  match /[A-Z]\\w+/\n}\n"
+        nodes = parse_kdl(src)
+        self.assertTrue(len(nodes) > 0)
+        self.assertEqual(nodes[0].name, "window-rule")
+
+    def test_include_with_tilde_path_resolves(self):
+        sub_path = self.root / "included.kdl"
+        sub_path.write_text("gaps 14\n")
+        import os
+
+        with patch.dict(os.environ, {"HOME": str(self.root)}):
+            config = self.root / "config.kdl"
+            config.write_text('include "~/included.kdl"\n')
+            with patch.object(kdl_parser, "NIRI_CONFIG", config):
+                nodes, slots = load_niri_config_multi()
+                self.assertEqual(len(slots), 1)
+                self.assertTrue(any(n.name == "gaps" for n in nodes))
+
 
 if __name__ == "__main__":
     unittest.main()
