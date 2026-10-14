@@ -68,7 +68,14 @@ def _overlaps(first: dict, second: dict) -> bool:
     )
 
 
-def _drag(outputs: list[dict], name: str, x: float, y: float) -> tuple[float, float]:
+def _drag(
+    outputs: list[dict],
+    name: str,
+    x: float,
+    y: float,
+    dx: float = 0,
+    dy: float = 0,
+) -> tuple[float, float]:
     page = object.__new__(OutputsPage)
     page._outputs = outputs
     page._drag_output = name
@@ -76,11 +83,11 @@ def _drag(outputs: list[dict], name: str, x: float, y: float) -> tuple[float, fl
     page._drag_current_ly = y
     page._drag_start_scale = 1
     page._canvas_scale = 1
-    page._last_dx = 0
-    page._last_dy = 0
+    page._last_dx = dx
+    page._last_dy = dy
     page._canvas = None
 
-    page._on_drag_update(None, 0, 0)
+    page._on_drag_update(None, dx, dy)
 
     dragged = next(output for output in outputs if output["name"] == name)
     position = dragged["logical"]
@@ -91,28 +98,28 @@ class TestOutputSnapping(unittest.TestCase):
     def test_snap_right_rounds_outward(self):
         outputs = [_output("left", 1652, -32), _output("right", 3975, -32)]
 
-        x, _ = _drag(outputs, "right", 3975, -32)
+        x, _ = _drag(outputs, "right", 3975, -32, dx=1)
 
         self.assertEqual(x, 3980)
 
     def test_snap_left_rounds_outward(self):
         outputs = [_output("left", 1655, -32), _output("right", 3980, -32)]
 
-        x, _ = _drag(outputs, "left", 1655, -32)
+        x, _ = _drag(outputs, "left", 1655, -32, dx=-1)
 
         self.assertEqual(x, 1652)
 
     def test_snap_below_rounds_outward(self):
         outputs = [_output("top", 0, 0), _output("bottom", 0, 1305)]
 
-        _, y = _drag(outputs, "bottom", 0, 1305)
+        _, y = _drag(outputs, "bottom", 0, 1305, dy=1)
 
         self.assertEqual(y, 1310)
 
     def test_snap_above_rounds_outward(self):
         outputs = [_output("top", 0, -1305), _output("bottom", 0, 0)]
 
-        _, y = _drag(outputs, "top", 0, -1305)
+        _, y = _drag(outputs, "top", 0, -1305, dy=-1)
 
         self.assertEqual(y, -1310)
 
@@ -123,7 +130,7 @@ class TestOutputSnapping(unittest.TestCase):
         dragged = _output("dragged", exact_width, 2000)
         outputs = [upper, right, dragged]
 
-        position = _drag(outputs, "dragged", exact_width, 2000)
+        position = _drag(outputs, "dragged", exact_width, 2000, dx=1)
 
         self.assertEqual(position, (2327, 2000))
         self.assertFalse(_overlaps(dragged, upper))
@@ -136,7 +143,7 @@ class TestOutputSnapping(unittest.TestCase):
         dragged = _output("dragged", 3000, exact_height)
         outputs = [left, below, dragged]
 
-        position = _drag(outputs, "dragged", 3000, exact_height)
+        position = _drag(outputs, "dragged", 3000, exact_height, dy=1)
 
         self.assertEqual(position, (3000, 1309))
         self.assertFalse(_overlaps(dragged, left))
@@ -154,7 +161,7 @@ class TestOutputSnapping(unittest.TestCase):
                 dragged = _output("dragged", -2325, row * row_height)
                 outputs = [*stack, dragged]
 
-                position = _drag(outputs, "dragged", -2325, row * row_height)
+                position = _drag(outputs, "dragged", -2325, row * row_height, dx=-1)
 
                 self.assertEqual(position, (-2328, row * row_height))
                 self.assertTrue(all(not _overlaps(dragged, output) for output in stack))
@@ -171,7 +178,9 @@ class TestOutputSnapping(unittest.TestCase):
                 dragged = _output("dragged", column * column_width, -1305)
                 outputs = [*row, dragged]
 
-                position = _drag(outputs, "dragged", column * column_width, -1305)
+                position = _drag(
+                    outputs, "dragged", column * column_width, -1305, dy=-1
+                )
 
                 self.assertEqual(position, (column * column_width, -1310))
                 self.assertTrue(all(not _overlaps(dragged, output) for output in row))
@@ -183,7 +192,7 @@ class TestOutputSnapping(unittest.TestCase):
         dragged = _output("dragged", 2325, 1305)
         existing = [top_left, top_right, bottom_left]
 
-        position = _drag([*existing, dragged], "dragged", 2325, 1305)
+        position = _drag([*existing, dragged], "dragged", 2325, 1305, dx=1, dy=1)
 
         self.assertEqual(position, (2328, 1310))
         self.assertTrue(all(not _overlaps(dragged, output) for output in existing))
@@ -199,7 +208,7 @@ class TestOutputSnapping(unittest.TestCase):
         )
         dragged = _output("dragged", 1648, -32)
 
-        position = _drag([laptop, dragged], "dragged", 1648, -32)
+        position = _drag([laptop, dragged], "dragged", 1648, -32, dx=1)
 
         self.assertEqual(position, (1652, -32))
         self.assertFalse(_overlaps(dragged, laptop))

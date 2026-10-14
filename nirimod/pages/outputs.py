@@ -15,6 +15,14 @@ from gi.repository import Adw, Gtk
 
 from nirimod import niri_ipc
 from nirimod.kdl_parser import KdlNode, set_child_arg, safe_switch_connect
+from nirimod.output_layout import (
+    attach_stray_clusters,
+    cascade_positions,
+    flush_links,
+    layout_is_sound,
+    pack_rects,
+    separate_overlaps,
+)
 from nirimod.pages.base import BasePage
 
 if TYPE_CHECKING:
@@ -59,6 +67,14 @@ class OutputsPage(BasePage):
         self._canvas: Gtk.DrawingArea | None = None
         self._drag_output: str | None = None
         self._drag_offset: tuple[float, float] = (0, 0)
+
+        self._touch_seq = 0
+        self._touch_order: dict[str, int] = {}
+        self._size_deltas: dict[str, tuple[int, int]] = {}
+        self._pending_links: (
+            tuple[dict[str, list[str]], dict[str, list[str]]] | None
+        ) = None
+        self._syncing_pos = False
 
     def build(self) -> Gtk.Widget:
         tb, header, scroll, content = self._make_toolbar_page("Outputs")
@@ -364,6 +380,8 @@ class OutputsPage(BasePage):
                 self._last_dy = 0
                 self._drag_current_lx = pos.get("x", 0)
                 self._drag_current_ly = pos.get("y", 0)
+                self._drag_start_lx = pos.get("x", 0)
+                self._drag_start_ly = pos.get("y", 0)
                 self._drag_start_scale = scale
                 self._drag_start_offset = (ox, oy)
                 return
@@ -412,7 +430,9 @@ class OutputsPage(BasePage):
         logical_w = pixel_w / monitor_scale
         logical_h = pixel_h / monitor_scale
 
-        # edge snapping
+        # edge snapping, only along the axis the pointer actually travelled
+        moved_x = dx != 0
+        moved_y = dy != 0
         SNAP_THRESHOLD = 30
         snapped_x = new_lx
         snapped_y = new_ly
@@ -458,16 +478,16 @@ class OutputsPage(BasePage):
             other_top = other_y
             other_bottom = other_y + other_logical_h
 
-            vertical_spans_are_near = not (
-                dragged_bottom < other_top - SNAP_THRESHOLD
-                or other_bottom + SNAP_THRESHOLD < dragged_top
+            vertical_overlap = max(
+                0, min(dragged_bottom, other_bottom) - max(dragged_top, other_top)
             )
-            horizontal_spans_are_near = not (
-                dragged_right < other_left - SNAP_THRESHOLD
-                or other_right + SNAP_THRESHOLD < dragged_left
+            vertical_spans_are_near = vertical_overlap > 0
+            horizontal_overlap = max(
+                0, min(dragged_right, other_right) - max(dragged_left, other_left)
             )
+            horizontal_spans_are_near = horizontal_overlap > 0
 
-            if vertical_spans_are_near:
+            if moved_x and vertical_spans_are_near:
                 for dragged_edge, is_left_edge in [
                     (dragged_left, True),
                     (dragged_right, False),
@@ -486,7 +506,7 @@ class OutputsPage(BasePage):
                                 is_other_left_edge,
                             )
 
-            if horizontal_spans_are_near:
+            if moved_y and horizontal_spans_are_near:
                 for dragged_edge, is_top_edge in [
                     (dragged_top, True),
                     (dragged_bottom, False),
@@ -519,21 +539,28 @@ class OutputsPage(BasePage):
             self._canvas.queue_draw()
 
     def _on_drag_end(self, gesture, dx, dy):
-        if self._drag_output:
-            if self._canvas:
-                self._canvas.queue_draw()
+        if not self._drag_output:
+            return
+        if self._canvas:
+            self._canvas.queue_draw()
 
-            for o in self._outputs:
-                self._apply_position(o["name"])
-
-            if self._current_out:
-                cur_pos = self._current_out.get("logical") or {}
-                if hasattr(self, "_pos_x_adj"):
-                    self._pos_x_adj.set_value(cur_pos.get("x", 0))
-                if hasattr(self, "_pos_y_adj"):
-                    self._pos_y_adj.set_value(cur_pos.get("y", 0))
-
+        moved = next(
+            (o for o in self._outputs if o.get("name") == self._drag_output), None
+        )
+        pos = (moved.get("logical") or {}) if moved else {}
+        if pos.get("x", 0) == getattr(self, "_drag_start_lx", None) and pos.get(
+            "y", 0
+        ) == getattr(self, "_drag_start_ly", None):
             self._drag_output = None
+            return
+
+        self._touch(self._drag_output)
+        self._apply_position(self._drag_output)
+        self._commit_outputs("output position")
+
+        self._sync_pos_rows(self._drag_output)
+
+        self._drag_output = None
 
     def _on_canvas_click(self, gesture, n_press, x, y):
         if not hasattr(self, "_canvas_scale"):
@@ -553,30 +580,142 @@ class OutputsPage(BasePage):
                 self._out_combo.set_selected(i)
                 return
 
+    def _touch(self, name: str) -> None:
+        self._touch_seq += 1
+        self._touch_order[name] = self._touch_seq
+
+    def _desired_rects(self) -> list[dict]:
+        rects = []
+        for o in self._outputs:
+            pos = o.get("logical") or {}
+            name = o.get("name", "")
+            x, y = pos.get("x", 0), pos.get("y", 0)
+            if name not in self._touch_order:
+                out_node = next(
+                    (
+                        n
+                        for n in self._nodes
+                        if n.name == "output" and n.args and n.args[0] == name
+                    ),
+                    None,
+                )
+                pos_node = out_node.get_child("position") if out_node else None
+                if pos_node is not None:
+                    x = pos_node.props.get("x", x)
+                    y = pos_node.props.get("y", y)
+            rects.append(
+                {
+                    "name": name,
+                    "x": int(x),
+                    "y": int(y),
+                    "w": int(pos.get("width", 1920)),
+                    "h": int(pos.get("height", 1080)),
+                }
+            )
+        return rects
+
+    def _normalize_positions(self) -> list[str]:
+        rects = self._desired_rects()
+        if len(rects) < 2:
+            self._size_deltas.clear()
+            self._pending_links = None
+            return []
+
+        cascade_positions(rects, self._size_deltas, self._pending_links)
+
+        repaired: dict[str, str] = {}
+        packed: list[str] = []
+        stranded: list[str] = []
+        sound: list[tuple[int, int]] | None = None
+        seen: set[tuple[tuple[int, int], ...]] = set()
+        for _ in range(len(rects) * 2 + 4):
+            state = tuple((r["x"], r["y"]) for r in rects)
+            if state in seen:
+                break
+            seen.add(state)
+            if layout_is_sound(rects):
+                sound = list(state)
+            for name, _x, _y, other in separate_overlaps(rects, self._touch_order):
+                repaired[name] = other
+            for name in pack_rects(rects):
+                if name not in packed:
+                    packed.append(name)
+            for name in attach_stray_clusters(rects):
+                if name not in stranded:
+                    stranded.append(name)
+            if tuple((r["x"], r["y"]) for r in rects) == state:
+                break
+        if sound is not None and not layout_is_sound(rects):
+            for r, (x, y) in zip(rects, sound):
+                r["x"], r["y"] = x, y
+
+        origin_x = min(r["x"] for r in rects)
+        origin_y = min(r["y"] for r in rects)
+        if origin_x or origin_y:
+            for r in rects:
+                r["x"] -= origin_x
+                r["y"] -= origin_y
+
+        corrections: dict[str, tuple[int, int]] = {}
+        for r in rects:
+            o = next((x for x in self._outputs if x.get("name") == r["name"]), None)
+            if not o:
+                continue
+            pos = o.setdefault("logical", {})
+            if pos.get("x") != r["x"] or pos.get("y") != r["y"]:
+                corrections[r["name"]] = (r["x"], r["y"])
+            pos["x"] = r["x"]
+            pos["y"] = r["y"]
+
+        self._size_deltas.clear()
+        self._pending_links = None
+
+        for name, (x, y) in corrections.items():
+            out_node = self._get_or_create_out_node(name)
+            pos_node = out_node.get_child("position")
+            if pos_node is None:
+                pos_node = KdlNode(name="position")
+                out_node.children.append(pos_node)
+            pos_node.props["x"] = int(x)
+            pos_node.props["y"] = int(y)
+
+        if corrections and self._canvas:
+            self._canvas.queue_draw()
+        return list(corrections)
+
+    def _commit_outputs(self, description: str) -> None:
+        self._normalize_positions()
+        self._commit(description)
+
     def _apply_position(self, name: str):
         o = next((x for x in self._outputs if x["name"] == name), None)
         if not o:
             return
         pos = o.get("logical") or {}
 
-        nx = pos.get("x", 0)
-        ny = pos.get("y", 0)
-
         out_node = self._get_or_create_out_node(name)
         pos_node = out_node.get_child("position")
         if pos_node is None:
             pos_node = KdlNode(name="position")
             out_node.children.append(pos_node)
-        pos_node.props["x"] = int(round(nx))
-        pos_node.props["y"] = int(round(ny))
+        pos_node.props["x"] = int(round(pos.get("x", 0)))
+        pos_node.props["y"] = int(round(pos.get("y", 0)))
 
-        if self._current_out and self._current_out.get("name") == name:
-            if hasattr(self, "_pos_x_adj"):
-                self._pos_x_adj.set_value(nx)
-            if hasattr(self, "_pos_y_adj"):
-                self._pos_y_adj.set_value(ny)
-
-        self._commit("output position")
+    def _sync_pos_rows(self, name: str) -> None:
+        if not (self._current_out and self._current_out.get("name") == name):
+            return
+        if not (hasattr(self, "_pos_x_adj") and hasattr(self, "_pos_y_adj")):
+            return
+        pos = self._current_out.get("logical") or {}
+        x, y = pos.get("x", 0), pos.get("y", 0)
+        self._syncing_pos = True
+        try:
+            if self._pos_x_adj.get_value() != x:
+                self._pos_x_adj.set_value(x)
+            if self._pos_y_adj.get_value() != y:
+                self._pos_y_adj.set_value(y)
+        finally:
+            self._syncing_pos = False
 
     def _on_output_selected(self, combo, _):
         idx = combo.get_selected()
@@ -811,8 +950,24 @@ class OutputsPage(BasePage):
         if t_str in ["90", "270", "flipped-90", "flipped-270"]:
             pw, ph = ph, pw
 
-        o["logical"]["width"] = round(pw / scale)
-        o["logical"]["height"] = round(ph / scale)
+        old_w = o["logical"].get("width")
+        old_h = o["logical"].get("height")
+        new_w = round(pw / scale)
+        new_h = round(ph / scale)
+
+        if old_w is not None and (new_w != old_w or new_h != old_h):
+            if self._pending_links is None:
+                self._pending_links = flush_links(self._desired_rects())
+            name = o.get("name")
+            if isinstance(name, str):
+                prev_dw, prev_dh = self._size_deltas.get(name, (0, 0))
+                self._size_deltas[name] = (
+                    prev_dw + new_w - old_w,
+                    prev_dh + new_h - old_h,
+                )
+
+        o["logical"]["width"] = new_w
+        o["logical"]["height"] = new_h
 
     def _on_mode_changed(self, name: str, modes: list, idx: int):
         if not (0 <= idx < len(modes)):
@@ -823,11 +978,12 @@ class OutputsPage(BasePage):
         set_child_arg(out_node, "mode", mode_str)
 
         o = next((x for x in self._outputs if x.get("name") == name), None)
+        self._touch(name)
         if o:
             o["current_mode"] = idx
             self._update_logical_dims(o)
 
-        self._commit("output mode")
+        self._commit_outputs("output mode")
         if self._canvas:
             self._canvas.queue_draw()
 
@@ -839,6 +995,7 @@ class OutputsPage(BasePage):
         set_child_arg(out_node, prop, value)
 
         o = next((x for x in self._outputs if x.get("name") == name), None)
+        self._touch(name)
         if o:
             if not o.get("logical"):
                 o["logical"] = {}
@@ -848,11 +1005,13 @@ class OutputsPage(BasePage):
                 o["logical"]["transform"] = value
             self._update_logical_dims(o)
 
-        self._commit(f"output {prop}")
+        self._commit_outputs(f"output {prop}")
         if self._canvas:
             self._canvas.queue_draw()
 
     def _set_output_pos(self, name: str, x: int, y: int):
+        if self._syncing_pos:
+            return
         out_node = self._get_or_create_out_node(name)
         pos_node = out_node.get_child("position")
         if pos_node is None:
@@ -869,7 +1028,8 @@ class OutputsPage(BasePage):
             o["logical"]["x"] = x
             o["logical"]["y"] = y
 
-        self._commit("output position")
+        self._touch(name)
+        self._commit_outputs("output position")
         if self._canvas:
             self._canvas.queue_draw()
 
