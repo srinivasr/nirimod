@@ -310,7 +310,7 @@ toast label { font-weight: 500; }
     font-size: 0.7rem;
 }
 .nm-binding-action-name {
-    color: rgba(192, 132, 252, 1.0);
+    color: white;
     font-weight: 600;
     font-size: 1.0rem;
 }
