@@ -41,7 +41,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib
 
-from nirimod.window import NiriModWindow
+from nirimod.window import SIDEBAR_PAGES, NiriModWindow
+
+# Valid values for --page: the sidebar page IDs, in sidebar order.
+PAGE_IDS = tuple(page_id for page_id, _icon, _label in SIDEBAR_PAGES)
 
 
 class NiriModApp(Adw.Application):
@@ -59,6 +62,7 @@ class NiriModApp(Adw.Application):
         style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
 
         self._cli_config_path: str | None = None
+        self._cli_page: str | None = None
         self.add_main_option(
             "config",
             ord("c"),
@@ -75,11 +79,30 @@ class NiriModApp(Adw.Application):
             "Show application version",
             None,
         )
+        self.add_main_option(
+            "page",
+            ord("p"),
+            GLib.OptionFlags.NONE,
+            GLib.OptionArg.STRING,
+            "Open on this page (" + ", ".join(PAGE_IDS) + ")",
+            "PAGE",
+        )
 
     def do_handle_local_options(self, options: GLib.VariantDict) -> int:
         if options.contains("version"):
             print("NiriMod 0.5.0")
             return 0
+        if options.contains("page"):
+            page = options.lookup_value("page").get_string()
+            if page not in PAGE_IDS:
+                # Reject before the config is read or any window is created.
+                print(
+                    f"nirimod: unknown page {page!r}; valid pages: "
+                    + ", ".join(PAGE_IDS),
+                    file=sys.stderr,
+                )
+                return 2
+            self._cli_page = page
         if options.contains("config"):
             self._cli_config_path = options.lookup_value("config").get_string()
         return -1
@@ -95,7 +118,9 @@ class NiriModApp(Adw.Application):
                 config_path=cfg_path,
                 backup_path=app_settings.get("backup_path", ""),
             )
-            win = NiriModWindow(application=self)
+            win = NiriModWindow(application=self, initial_page=self._cli_page)
+        elif self._cli_page is not None:
+            win.select_page(self._cli_page)
         win.present()
 
 

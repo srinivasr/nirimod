@@ -51,6 +51,17 @@ xdg.configFile."niri/config.kdl".source = config.lib.file.mkOutOfStoreSymlink "$
 
 NiriMod resolves symlinks to their underlying target before writing, allowing GUI adjustments to commit directly into your dotfiles repository.
 
+## Usage
+
+```bash
+nirimod                          # open on the first page
+nirimod --page outputs           # open directly on a sidebar page
+nirimod -p bindings -c ~/dotfiles/niri/config.kdl
+nirimod --help                   # list options and valid page IDs
+```
+
+Valid `--page` / `-p` IDs, matching the sidebar order: `input`, `bindings`, `outputs`, `appearance`, `animations`, `layout`, `workspaces`, `window_rules`, `startup`, `environment`, `gestures`, `raw_config`. An unknown ID exits with status 2 before the config is read or a window is opened.
+
 ## Installation
 
 ### Arch Linux (AUR)
