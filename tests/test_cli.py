@@ -14,8 +14,7 @@ import pytest
 pytest.importorskip("gi")
 
 from gi.repository import GLib
-from nirimod.__main__ import NiriModApp
-from nirimod.window import SIDEBAR_PAGES
+from nirimod.__main__ import PAGE_IDS, NiriModApp
 
 
 class TestCLIArguments(unittest.TestCase):
@@ -47,16 +46,15 @@ class TestCLIArguments(unittest.TestCase):
         return variant_dict
 
     def test_cli_page_accepts_every_sidebar_page(self):
-        for page_id, _icon, _label in SIDEBAR_PAGES:
+        for page_id in PAGE_IDS:
             with self.subTest(page=page_id):
                 app = NiriModApp()
 
                 ret = app.do_handle_local_options(self._page_options(page_id))
                 self.assertEqual(ret, -1)
-                self.assertEqual(getattr(app, "_cli_page", None), page_id)
+                self.assertEqual(app._cli_page, page_id)
 
     def test_cli_page_rejects_unknown_page(self):
-        valid_ids = [page_id for page_id, _icon, _label in SIDEBAR_PAGES]
         for bad_page in ("nope", "", "Outputs", "outputs "):
             with self.subTest(page=bad_page):
                 app = NiriModApp()
@@ -66,8 +64,8 @@ class TestCLIArguments(unittest.TestCase):
                     ret = app.do_handle_local_options(self._page_options(bad_page))
 
                 self.assertEqual(ret, 2)
-                self.assertIsNone(getattr(app, "_cli_page", None))
-                for page_id in valid_ids:
+                self.assertIsNone(app._cli_page)
+                for page_id in PAGE_IDS:
                     self.assertIn(page_id, stderr.getvalue())
 
     def test_cli_page_help_lists_every_sidebar_page(self):
@@ -77,11 +75,12 @@ class TestCLIArguments(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            timeout=10,
         )
 
-        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("--page", result.stdout)
-        for page_id, _icon, _label in SIDEBAR_PAGES:
+        for page_id in PAGE_IDS:
             self.assertIn(page_id, result.stdout)
 
     def test_cli_page_with_config_and_version(self):
@@ -91,10 +90,8 @@ class TestCLIArguments(unittest.TestCase):
             "config", GLib.Variant.new_string("/custom/path/config.kdl")
         )
         self.assertEqual(app.do_handle_local_options(variant_dict), -1)
-        self.assertEqual(getattr(app, "_cli_page", None), "outputs")
-        self.assertEqual(
-            getattr(app, "_cli_config_path", None), "/custom/path/config.kdl"
-        )
+        self.assertEqual(app._cli_page, "outputs")
+        self.assertEqual(app._cli_config_path, "/custom/path/config.kdl")
 
         # --version still short-circuits, even alongside an invalid page.
         version_dict = self._page_options("nope")
@@ -106,35 +103,145 @@ class TestCLIArguments(unittest.TestCase):
         app = NiriModApp()
 
         self.assertEqual(app.do_handle_local_options(GLib.VariantDict.new()), -1)
-        self.assertIsNone(getattr(app, "_cli_page", None))
+        self.assertIsNone(app._cli_page)
 
-    def _activate(self, app: NiriModApp) -> mock.Mock:
+    def test_activate_creates_window_with_initial_page(self):
+        app = NiriModApp()
+        app.do_handle_local_options(self._page_options("outputs"))
+
         window = mock.Mock()
         with (
-            mock.patch("nirimod.__main__.NiriModWindow", return_value=window),
+            mock.patch(
+                "nirimod.__main__.NiriModWindow", return_value=window
+            ) as mock_win_cls,
             mock.patch.object(app, "get_active_window", return_value=None),
             mock.patch("nirimod.kdl_parser.set_paths"),
             mock.patch("nirimod.app_settings.get", return_value=""),
         ):
             app.do_activate()
-        return window
 
-    def test_activate_selects_requested_page_before_present(self):
-        app = NiriModApp()
-        app.do_handle_local_options(self._page_options("outputs"))
+        mock_win_cls.assert_called_once_with(application=app, initial_page="outputs")
+        window.present.assert_called_once_with()
+        window.select_page.assert_not_called()
 
-        window = self._activate(app)
-
-        self.assertEqual(
-            [call[0] for call in window.method_calls], ["_select_page", "present"]
-        )
-        window._select_page.assert_called_once_with("outputs")
-
-    def test_activate_without_page_keeps_default_page(self):
+    def test_activate_without_page_passes_none(self):
         app = NiriModApp()
         app.do_handle_local_options(GLib.VariantDict.new())
 
-        window = self._activate(app)
+        window = mock.Mock()
+        with (
+            mock.patch(
+                "nirimod.__main__.NiriModWindow", return_value=window
+            ) as mock_win_cls,
+            mock.patch.object(app, "get_active_window", return_value=None),
+            mock.patch("nirimod.kdl_parser.set_paths"),
+            mock.patch("nirimod.app_settings.get", return_value=""),
+        ):
+            app.do_activate()
 
-        window._select_page.assert_not_called()
+        mock_win_cls.assert_called_once_with(application=app, initial_page=None)
         window.present.assert_called_once_with()
+        window.select_page.assert_not_called()
+
+    def test_activate_existing_window_selects_page(self):
+        app = NiriModApp()
+        app.do_handle_local_options(self._page_options("outputs"))
+
+        existing_window = mock.Mock()
+        with (
+            mock.patch.object(app, "get_active_window", return_value=existing_window),
+            mock.patch("nirimod.__main__.NiriModWindow") as mock_win_cls,
+        ):
+            app.do_activate()
+
+        mock_win_cls.assert_not_called()
+        existing_window.select_page.assert_called_once_with("outputs")
+        existing_window.present.assert_called_once_with()
+
+    def test_cli_page_with_mock_kdl_file(self):
+        import tempfile
+        from pathlib import Path
+
+        mock_kdl_content = (
+            "input {\n"
+            "    keyboard {\n"
+            '        xkb { layout "us" }\n'
+            "    }\n"
+            "}\n"
+            'output "eDP-1" {\n'
+            "    scale 2.0\n"
+            "}\n"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.kdl"
+            config_path.write_text(mock_kdl_content)
+
+            app = NiriModApp()
+            variant_dict = self._page_options("outputs")
+            variant_dict.insert_value(
+                "config", GLib.Variant.new_string(str(config_path))
+            )
+            ret = app.do_handle_local_options(variant_dict)
+
+            self.assertEqual(ret, -1)
+            self.assertEqual(app._cli_page, "outputs")
+            self.assertEqual(app._cli_config_path, str(config_path))
+
+            window = mock.Mock()
+            with (
+                mock.patch(
+                    "nirimod.__main__.NiriModWindow", return_value=window
+                ) as mock_win_cls,
+                mock.patch.object(app, "get_active_window", return_value=None),
+                mock.patch("nirimod.kdl_parser.set_paths") as mock_set_paths,
+                mock.patch("nirimod.app_settings.get", return_value=""),
+            ):
+                app.do_activate()
+
+            mock_set_paths.assert_called_once_with(
+                config_path=str(config_path), backup_path=""
+            )
+            mock_win_cls.assert_called_once_with(
+                application=app, initial_page="outputs"
+            )
+            window.present.assert_called_once_with()
+
+            app_invalid = NiriModApp()
+            bad_variant = self._page_options("nonexistent_page")
+            bad_variant.insert_value(
+                "config", GLib.Variant.new_string(str(config_path))
+            )
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                ret_bad = app_invalid.do_handle_local_options(bad_variant)
+
+            self.assertEqual(ret_bad, 2)
+            self.assertIn("unknown page 'nonexistent_page'", stderr.getvalue())
+            self.assertEqual(config_path.read_text(), mock_kdl_content)
+
+    def test_mock_kdl_round_trip_and_node_loading(self):
+        import tempfile
+        from pathlib import Path
+        from nirimod.kdl_parser import load_niri_config_multi, set_paths
+
+        mock_kdl = (
+            "input {\n"
+            "    keyboard {\n"
+            '        xkb { layout "us" }\n'
+            "    }\n"
+            "}\n"
+            'output "DP-1" {\n'
+            '    mode "3840x2160@60"\n'
+            "    scale 1.5\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.kdl"
+            config_path.write_text(mock_kdl)
+            set_paths(config_path=str(config_path))
+
+            nodes, _ = load_niri_config_multi()
+            self.assertEqual([n.name for n in nodes], ["input", "output"])
+            output_node = next(n for n in nodes if n.name == "output")
+            self.assertEqual(output_node.args, ["DP-1"])

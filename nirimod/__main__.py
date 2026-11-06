@@ -118,9 +118,9 @@ class NiriModApp(Adw.Application):
                 config_path=cfg_path,
                 backup_path=app_settings.get("backup_path", ""),
             )
-            win = NiriModWindow(application=self)
-        if self._cli_page is not None:
-            win._select_page(self._cli_page)
+            win = NiriModWindow(application=self, initial_page=self._cli_page)
+        elif self._cli_page is not None:
+            win.select_page(self._cli_page)
         win.present()
 
 

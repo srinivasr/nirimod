@@ -68,7 +68,7 @@ SIDEBAR_PAGES = [entry for _, group in SIDEBAR_GROUPS for entry in group]
 
 
 class NiriModWindow(Adw.ApplicationWindow):
-    def __init__(self, **kwargs):
+    def __init__(self, initial_page=None, **kwargs):
         super().__init__(**kwargs)
         self.set_title("NiriMod")
         self.set_default_size(1060, 720)
@@ -76,6 +76,9 @@ class NiriModWindow(Adw.ApplicationWindow):
         self.app_state = AppState()
         self.app_state.load()
 
+        self._initial_page = initial_page or (
+            SIDEBAR_PAGES[0][0] if SIDEBAR_PAGES else ""
+        )
         self._current_page_id = ""
         self._pages: dict[str, Gtk.Widget] = {}
         self._sidebar_rows: dict[str, Gtk.ListBoxRow] = {}
@@ -120,9 +123,8 @@ class NiriModWindow(Adw.ApplicationWindow):
 
         self._setup_shortcuts()
 
-        # Navigate to first page
-        if SIDEBAR_PAGES:
-            self._select_page(SIDEBAR_PAGES[0][0])
+        if self._initial_page:
+            self.select_page(self._initial_page)
 
     def _build_sidebar_nav(self) -> Adw.NavigationPage:
         nav = Adw.NavigationPage(title="NiriMod")
@@ -351,7 +353,7 @@ class NiriModWindow(Adw.ApplicationWindow):
                     lb.unselect_all()
             self._select_page(pid)
 
-    def _select_page(self, page_id: str):
+    def select_page(self, page_id: str):
         self._current_page_id = page_id
         self._stack.set_visible_child_name(page_id)
         for pid, _, title in SIDEBAR_PAGES:
@@ -369,6 +371,8 @@ class NiriModWindow(Adw.ApplicationWindow):
         page = self._pages.get(page_id)
         if page and hasattr(page, "on_shown"):
             page.on_shown()
+
+    _select_page = select_page
 
     def _build_search_index(self):
         self._search_index: list[dict] = []
