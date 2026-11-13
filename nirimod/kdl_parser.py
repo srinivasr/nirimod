@@ -443,6 +443,14 @@ def load_niri_config() -> list[KdlNode]:
     return parse_kdl(NIRI_CONFIG.read_text())
 
 
+def _is_writable_target(path: Path) -> bool:
+    """Return True if path can be atomically replaced (temp file goes in its directory)."""
+    target = _write_target(path)
+    if target.exists() and not os.access(target, os.W_OK):
+        return False
+    return os.access(target.parent, os.W_OK)
+
+
 def _resolve_includes(
     nodes: list[KdlNode],
     base: Path,
@@ -479,6 +487,11 @@ def _resolve_includes(
                 import warnings
 
                 warnings.warn(f"nirimod: included file not found: {target}")
+            continue
+
+        if not _is_writable_target(target):
+            # read-only include (e.g. under /usr/share): keep the statement,
+            # don't load it as editable nodes
             continue
 
         included = parse_kdl(target.read_text())
@@ -576,8 +589,17 @@ def save_niri_config_multi(
         primary_items.append((getattr(node, "_primary_order", _LARGE), node))
     primary_items.sort(key=lambda x: x[0])
 
+    import warnings
+
     for path, file_nodes in by_file.items():
-        _atomic_write(path, write_kdl(file_nodes))
+        if not _is_writable_target(path):
+            warnings.warn(f"nirimod: skipping read-only included file: {path}")
+            continue
+        try:
+            _atomic_write(path, write_kdl(file_nodes))
+        except OSError as exc:
+            # the check can race the write or lie (NFS, FUSE, LSM)
+            warnings.warn(f"nirimod: could not write included file {path}: {exc}")
 
     _atomic_write(primary, write_kdl([n for _, n in primary_items]))
 

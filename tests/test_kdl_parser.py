@@ -6,8 +6,10 @@ all config changes in NiriMod.
 
 from __future__ import annotations
 
+import os
 import stat
 import unittest
+import warnings
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -309,6 +311,195 @@ class TestConfigWrites(unittest.TestCase):
         self.assertTrue(local_link.is_symlink())
         self.assertIn('include "local.kdl"', config_target.read_text())
         self.assertIn('spawn-at-startup "new"', local_target.read_text())
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod checks are meaningless as root")
+    def test_readonly_system_include_is_kept_but_not_editable(self):
+        sys_dir = self.root / "sys"
+        sys_dir.mkdir()
+        sys_file = sys_dir / "global.kdl"
+        sys_file.write_text('output "HDMI-A-1" {\n    scale 1\n}\n')
+        config = self.root / "config.kdl"
+        config.write_text(f'include "{sys_file}"\nprefer-no-csd\n')
+        sys_file.chmod(0o444)
+        sys_dir.chmod(0o555)
+        try:
+            with patch.object(kdl_parser, "NIRI_CONFIG", config):
+                nodes, slots = load_niri_config_multi()
+                self.assertEqual(len(slots), 1)
+                self.assertFalse(any(n.name == "output" for n in nodes))
+                save_niri_config_multi(nodes, slots)
+            self.assertIn(f'include "{sys_file}"', config.read_text())
+            self.assertIn("scale 1", sys_file.read_text())
+        finally:
+            sys_dir.chmod(0o755)
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod checks are meaningless as root")
+    def test_save_skips_file_that_becomes_readonly_after_load(self):
+        inc = self.root / "local.kdl"
+        inc.write_text('spawn-at-startup "old"\n')
+        config = self.root / "config.kdl"
+        config.write_text('include "local.kdl"\n')
+        with patch.object(kdl_parser, "NIRI_CONFIG", config):
+            nodes, slots = load_niri_config_multi()
+            startup = next(node for node in nodes if node.name == "spawn-at-startup")
+            startup.args[0] = "new"
+            inc.chmod(0o444)
+            try:
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    save_niri_config_multi(nodes, slots)
+                self.assertTrue(any("read-only" in str(w.message) for w in caught))
+            finally:
+                inc.chmod(0o644)
+        self.assertIn('spawn-at-startup "old"', inc.read_text())
+        self.assertIn('include "local.kdl"', config.read_text())
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod checks are meaningless as root")
+    def test_readonly_file_in_writable_dir_is_skipped(self):
+        ro = self.root / "ro.kdl"
+        ro.write_text("cursor {\n    xcursor-size 24\n}\n")
+        ro.chmod(0o444)
+        config = self.root / "config.kdl"
+        config.write_text('include "ro.kdl"\nprefer-no-csd\n')
+        try:
+            with patch.object(kdl_parser, "NIRI_CONFIG", config):
+                nodes, slots = load_niri_config_multi()
+                self.assertFalse(any(n.name == "cursor" for n in nodes))
+                save_niri_config_multi(nodes, slots)
+            self.assertIn("xcursor-size 24", ro.read_text())
+        finally:
+            ro.chmod(0o644)
+
+    def test_writable_include_outside_config_dir_stays_editable(self):
+        ext = self.root / "ext"
+        ext.mkdir()
+        shared = ext / "shared.kdl"
+        shared.write_text("animations\n")
+        config = self.root / "config.kdl"
+        config.write_text(f'include "{shared}"\nprefer-no-csd\n')
+        with patch.object(kdl_parser, "NIRI_CONFIG", config):
+            nodes, slots = load_niri_config_multi()
+            an = next((n for n in nodes if n.name == "animations"), None)
+            self.assertIsNotNone(an)
+            an.children.append(
+                KdlNode(name="slow-mode", args=[0.5], props={}, children=[])
+            )
+            save_niri_config_multi(nodes, slots)
+        self.assertIn("slow-mode", shared.read_text())
+
+    def test_symlinked_include_with_writable_target_stays_editable(self):
+        ext = self.root / "ext"
+        ext.mkdir()
+        target = ext / "shared.kdl"
+        target.write_text("layout {\n    gaps 8\n}\n")
+        link = self.root / "shared.kdl"
+        link.symlink_to(target)
+        config = self.root / "config.kdl"
+        config.write_text('include "shared.kdl"\nprefer-no-csd\n')
+        with patch.object(kdl_parser, "NIRI_CONFIG", config):
+            nodes, slots = load_niri_config_multi()
+            lay = next((n for n in nodes if n.name == "layout"), None)
+            self.assertIsNotNone(lay)
+            lay.children[0].args = [16]
+            save_niri_config_multi(nodes, slots)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("gaps 16", target.read_text())
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod checks are meaningless as root")
+    def test_symlinked_include_with_readonly_target_is_skipped(self):
+        sys_dir = self.root / "sys"
+        sys_dir.mkdir()
+        target = sys_dir / "g.kdl"
+        target.write_text("layout {\n    gaps 8\n}\n")
+        link = self.root / "g.kdl"
+        link.symlink_to(target)
+        target.chmod(0o444)
+        sys_dir.chmod(0o555)
+        config = self.root / "config.kdl"
+        config.write_text('include "g.kdl"\nprefer-no-csd\n')
+        try:
+            with patch.object(kdl_parser, "NIRI_CONFIG", config):
+                nodes, slots = load_niri_config_multi()
+                self.assertFalse(any(n.name == "layout" for n in nodes))
+                save_niri_config_multi(nodes, slots)
+            self.assertTrue(link.is_symlink())
+            self.assertIn("gaps 8", target.read_text())
+        finally:
+            sys_dir.chmod(0o755)
+            target.chmod(0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, "chmod checks are meaningless as root")
+    def test_nested_readonly_include_kept_in_intermediate_file(self):
+        sys_dir = self.root / "sys"
+        sys_dir.mkdir()
+        b = sys_dir / "b.kdl"
+        b.write_text('output "DP-1" {\n    scale 2\n}\n')
+        a = self.root / "a.kdl"
+        a.write_text(f'include "{b}"\nlayout {{\n    gaps 8\n}}\n')
+        config = self.root / "config.kdl"
+        config.write_text('include "a.kdl"\nprefer-no-csd\n')
+        b.chmod(0o444)
+        sys_dir.chmod(0o555)
+        try:
+            with patch.object(kdl_parser, "NIRI_CONFIG", config):
+                nodes, slots = load_niri_config_multi()
+                names = [n.name for n in nodes]
+                self.assertIn("layout", names)
+                self.assertNotIn("output", names)
+                lay = next(n for n in nodes if n.name == "layout")
+                lay.children[0].args = [12]
+                save_niri_config_multi(nodes, slots)
+            a_text = a.read_text()
+            self.assertIn("gaps 12", a_text)
+            self.assertIn(f'include "{b}"', a_text)
+            self.assertIn("scale 2", b.read_text())
+        finally:
+            sys_dir.chmod(0o755)
+            b.chmod(0o644)
+
+    def test_save_without_changes_is_byte_for_byte(self):
+        inc = self.root / "inc.kdl"
+        original_inc = "// top comment\nlayout {\n    gaps 8  // inline note\n}\n"
+        inc.write_text(original_inc)
+        main = '// my niri config\ninclude "inc.kdl"\n\nprefer-no-csd\n// trailing\n'
+        config = self.root / "config.kdl"
+        config.write_text(main)
+        with patch.object(kdl_parser, "NIRI_CONFIG", config):
+            nodes, slots = load_niri_config_multi()
+            save_niri_config_multi(nodes, slots)
+            self.assertEqual(config.read_text(), main)
+            self.assertEqual(inc.read_text(), original_inc)
+            lay = next(n for n in nodes if n.name == "layout")
+            lay.children[0].args = [20]
+            save_niri_config_multi(nodes, slots)
+        after = inc.read_text()
+        self.assertIn("gaps 20", after)
+        self.assertIn("top comment", after)
+        self.assertEqual(config.read_text(), main)
+
+    def test_save_survives_erofs_raised_at_write_time(self):
+        inc = self.root / "inc.kdl"
+        inc.write_text("layout {\n    gaps 8\n}\n")
+        config = self.root / "config.kdl"
+        config.write_text('include "inc.kdl"\nprefer-no-csd\n')
+        real_write = kdl_parser._atomic_write
+
+        def fake_write(path, content):
+            if Path(path) == inc:
+                raise OSError(30, "Read-only file system", str(path))
+            return real_write(path, content)
+
+        with patch.object(kdl_parser, "NIRI_CONFIG", config):
+            nodes, slots = load_niri_config_multi()
+            lay = next(n for n in nodes if n.name == "layout")
+            lay.children[0].args = [16]
+            with patch.object(kdl_parser, "_atomic_write", fake_write):
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    save_niri_config_multi(nodes, slots)
+        self.assertTrue(any("inc.kdl" in str(w.message) for w in caught))
+        self.assertIn("gaps 8", inc.read_text())
+        self.assertIn("prefer-no-csd", config.read_text())
 
     def test_lexer_handles_backslash_without_infinite_loop(self):
         src = "window-rule {\n  match /app-id\\.foo/\n  match /[A-Z]\\w+/\n}\n"
